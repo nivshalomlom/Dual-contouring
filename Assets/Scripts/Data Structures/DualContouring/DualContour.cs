@@ -236,6 +236,7 @@ public class DualContour
         QEF err = new QEF(intersections, normals);
 
         // Create the QEF
+        err.Solve();
         return err;
     }
 
@@ -295,7 +296,6 @@ public class DualContour
         // Solve QEF and store result in this node
         QEF data = this.CreateQEF(intersections, normals, bounds);
         node.SetData(data);
-        data.Solve();
         return true;
     }
 
@@ -334,7 +334,7 @@ public class DualContour
         // Attempt to simplify the root node
         QEF err = this.Simplify(root, function);
 
-        // If simplification succeeded and is under the given tolernceValue
+        // If simplification succeeded and is under the given tolernce value
         if (err != null)
         {
             // Compute simlified value
@@ -424,7 +424,7 @@ public class DualContour
     /*
     
     TODO:
-    1. Test the new octree building
+    1. Test the new octree building - done
     2. Triangulation
     
     */
