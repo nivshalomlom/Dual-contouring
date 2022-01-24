@@ -134,7 +134,7 @@ public class DualContour
     private float isoLevel;
 
     // The rendered shape
-    private Octree<QEF> root;
+    private Octree<NodeData> root;
 
     // Density cache
     private Dictionary<Vector3, float> DensityMap;
@@ -341,7 +341,6 @@ public class DualContour
         QEF err = new QEF(intersections, normals);
 
         // Create the QEF
-        err.Solve();
         return err;
     }
 
@@ -350,12 +349,33 @@ public class DualContour
     #region Octree construction
 
     /// <summary>
+    /// A class to hold the data of a qef node
+    /// </summary>
+    private struct NodeData
+    {
+        public QEF qef;
+        public Vector3 vertex;
+
+        /// <summary>
+        /// A constructor to build a new NodeData struct
+        /// </summary>
+        /// <param name="qef"> The qef of the node </param>
+        /// <param name="vertex"> The result of said qef </param>
+        public NodeData(QEF qef, Vector3 vertex)
+        {
+            this.qef = qef;
+            this.vertex = vertex;
+        }
+
+    }
+
+    /// <summary>
     /// A method to try a simplfy a given octree root into a single vertex
     /// </summary>
     /// <param name="root"> The node to simplify </param>
     /// <param name="function"> The density function of the scalar field the octree is tiling </param>
     /// <returns> A QEF if a simplification is possible, null otherwise </returns>
-    private QEF Simplify(Octree<QEF> root, Density function)
+    private QEF Simplify(Octree<NodeData> root, Density function)
     {
         // Sum all child QEF's
         QEF sum = null;
@@ -365,7 +385,7 @@ public class DualContour
                 continue;
             
             // Child not lead, cant simplify
-            QEF data = root[i].GetData();
+            QEF data = root[i].GetData().qef;
             if (data == null)
                 return null;
 
@@ -384,7 +404,7 @@ public class DualContour
     /// <param name="function"> The density function tiling this field </param>
     /// <param name="isoLevel"> The value of the density function edge </param>
     /// <returns> True if the node contains geometry, faslse otherwise </returns>
-    private bool ProcessNode(Octree<QEF> node, Density function, float isoLevel)
+    private bool ProcessNode(Octree<NodeData> node, Density function, float isoLevel)
     {
         // Compute intersections
         Cubiod bounds = node.GetBounds();
@@ -399,8 +419,9 @@ public class DualContour
         intersections.ForEach(point => normals.Add(this.ApproximateGradientAt(point, function)));
 
         // Solve QEF and store result in this node
-        QEF data = this.CreateQEF(intersections, normals, bounds);
-        node.SetData(data);
+        QEF qef = this.CreateQEF(intersections, normals, bounds);
+        float[] result = qef.Solve();
+        node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2])));
         return true;
     }
 
@@ -413,7 +434,7 @@ public class DualContour
     /// <param name="simplificationTolerenceValue"> The maximum residual to allow simplification on </param>
     /// <param name="depth"> The maximum depth for the octree </param>
     /// <returns> True if the density intersects the octree, false otherwise </returns>
-    private bool BuildOctree(Octree<QEF> root, Density function, float isoLevel, float simplificationTolerenceValue, int depth)
+    private bool BuildOctree(Octree<NodeData> root, Density function, float isoLevel, float simplificationTolerenceValue, int depth)
     {
         // If maximum depth reached
         if (depth == 0)
@@ -462,7 +483,7 @@ public class DualContour
 
             // Set root as leaf
             root.DeleteChildren();
-            root.SetData(err);
+            root.SetData(new NodeData(err, new Vector3(soultion[0], soultion[1], soultion[2])));
         }
         return true;
     }
@@ -478,7 +499,7 @@ public class DualContour
     /// <param name="direction"> The direction of the edge </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourProcessEdge(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    private void ContourProcessEdge(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
     {
         // Control parameters
         int[] ptrs = {-1, -1, -1, -1};
@@ -512,8 +533,7 @@ public class DualContour
 
             // Create vertex and add to list
             ptrs[i] = vertices.Count;
-            float[] vertex = nodes[i].GetData().GetLastResult();
-            vertices.Add(new Vector3(vertex[0], vertex[1], vertex[2]));
+            vertices.Add(nodes[i].GetData().vertex);
         }
 
         // Render quad id needed
@@ -550,7 +570,7 @@ public class DualContour
     /// <param name="direction"> The connection direction </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourEdgeProc(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    private void ContourEdgeProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
     {
         // Check input validity
         bool allLeaves = true;
@@ -569,7 +589,7 @@ public class DualContour
         else
             for (int i = 0; i < 2; i++)
             {
-                Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+                Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
                 for (int j = 0; j < 4; j++)
                     edgeNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][edgeProcEdgeMask[direction, i, j]];
 
@@ -584,7 +604,7 @@ public class DualContour
     /// <param name="direction"> The connection direction </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourFaceProc(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices) 
+    private void ContourFaceProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices) 
     {
         // If one of the nodes is null face dosnt exist
         if (nodes[0] == null || nodes[1] == null)
@@ -597,7 +617,7 @@ public class DualContour
         // Resolve all adjecnt faces
         for (int i = 0; i < 4; i++)
         {
-            Octree<QEF>[] faceNodes = new Octree<QEF>[2];
+            Octree<NodeData>[] faceNodes = new Octree<NodeData>[2];
             for (int j = 0; j < 2; j++)
                 faceNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][faceProcFaceMask[direction, i, j]];
 
@@ -607,12 +627,12 @@ public class DualContour
         // Resolve all adjecnt edges
         for (int i = 0; i < 4; i++)
         {
-            Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+            Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
             int order = faceProcEdgeMask[direction, i, 0];
 
             for (int j = 0; j < 4; j++)
             {
-                Octree<QEF> node = nodes[orders[order, j]];
+                Octree<NodeData> node = nodes[orders[order, j]];
                 edgeNodes[j] = node.IsLeaf() ? node : node[faceProcEdgeMask[direction, i, j + 1]];
             }
 
@@ -626,7 +646,7 @@ public class DualContour
     /// <param name="node"> The cell to process </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourCellProc(Octree<QEF> node, List<Vector3> vertices, List<int> indices)
+    private void ContourCellProc(Octree<NodeData> node, List<Vector3> vertices, List<int> indices)
     {
         // If node is leaf nothing can be done
         if (node.IsLeaf())
@@ -640,7 +660,7 @@ public class DualContour
         // Check for crossings on each edge
         for (int i = 0; i < 12; i++)
         {
-            Octree<QEF>[] faceNodes = 
+            Octree<NodeData>[] faceNodes = 
             {
                 node[cellProcFaceMask[i, 0]],
                 node[cellProcFaceMask[i, 1]]
@@ -652,7 +672,7 @@ public class DualContour
         // Check for crossings on each face
         for (int i = 0; i < 6; i++)
         {
-            Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+            Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
             for (int j = 0; j < 4; j++)
                 edgeNodes[j] = node[cellProcEdgeMask[i, j]];
 
@@ -660,7 +680,7 @@ public class DualContour
         }
     }
 
-    private Mesh BuildMesh(Octree<QEF> root)
+    private Mesh BuildMesh(Octree<NodeData> root)
     {
         // Create triangles
         List<Vector3> vertices = new List<Vector3>();
@@ -687,7 +707,7 @@ public class DualContour
     {
         // Build octree
         this.isoLevel = isoLevel;
-        this.root = new Octree<QEF>(this.bounds);
+        this.root = new Octree<NodeData>(this.bounds);
         this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth);
 
         // Generate mesh and clear cache

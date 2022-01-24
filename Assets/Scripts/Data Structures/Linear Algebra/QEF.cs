@@ -14,9 +14,6 @@ public class QEF
     private Matrix A_TA, A_TB, B_TB;
     private List<float> fixedValues;
 
-    // Computation cache
-    private float[] result;
-
     #endregion
 
     #region Constructors
@@ -115,11 +112,7 @@ public class QEF
     /// <returns> A value X the minimizes the QEF </returns>
     public float[] Solve()
     {
-        // If result is cached return it
-        if (this.result != null)
-            return this.result;
-
-         // U is a matrix containing eigen-vectors in each line
+        // U is a matrix containing eigen-vectors in each line
         // eigen[1] is U_T
         Matrix[] eigen = this.A_TA.Eigen(Mathf.Epsilon, 500);
         Matrix U = eigen[1].Transpose();
@@ -146,8 +139,7 @@ public class QEF
         }
 
         // Return result
-        this.result = new float[] {output[0], output[1], output[2], this.Evaluate(output.ToArray())};
-        return this.result;
+        return new float[] {output[0], output[1], output[2], this.Evaluate(output.ToArray())};
     }
 
     /// <summary>
@@ -204,12 +196,6 @@ public class QEF
         List<float> fixedValues = new List<float>(this.fixedValues);
         fixedValues[axis] = value;
         return new QEF(A_TA, A_TB, this.B_TB, fixedValues);
-    }
-
-    /// <returns> The result of that latest solve operation, null if no solve was done </returns>
-    public float[] GetLastResult()
-    {
-        return this.result;
     }
 
     /// <summary>
