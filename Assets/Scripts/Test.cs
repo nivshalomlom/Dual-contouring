@@ -6,8 +6,9 @@ public class Test : MonoBehaviour
 {
 
     // TODO: 
-    // 1. Octree simplification - done
-    // 2. Triangulation
+    // Figure out why some quads are skipped
+
+    public Material mat;
 
     DualContour shape;
     float size = 2;
@@ -15,8 +16,8 @@ public class Test : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        Cube bounds = new Cube(Vector3.one * -size * 2, Vector3.one * size * 2);
-        
+        Cubiod bounds = new Cubiod(Vector3.one * -size * 2, Vector3.one * size * 2);
+
         DualContour.Density heart = (x, y, z) => {
             float result = 2 * x * x + y * y + z * z - 1;
             return Mathf.Pow(result, 3) - z * z * y * y * y;
@@ -29,16 +30,11 @@ public class Test : MonoBehaviour
             return Mathf.Max(X, Y, Z) - size;
         };
 
-        this.shape = new DualContour(bounds, cube);
-        this.shape.Generate(0f, 0f, 5);
-    }
+        this.shape = new DualContour(bounds, heart);
+        Mesh m = this.shape.Generate(0f, 6e-6f, 6);
 
-    void OnDrawGizmos()
-    {
-        foreach (Vector3 leaf in this.shape.GetVertexes())
-        {
-            Gizmos.DrawSphere(leaf, 0.01f);
-        }
+        this.gameObject.AddComponent<MeshFilter>().mesh = m;
+        this.gameObject.AddComponent<MeshRenderer>().material = this.mat;
     }
 
 }

@@ -9,7 +9,7 @@ using UnityEngine;
 public class Octree<T>
 {
 
-    private Cube bounds;
+    private Cubiod bounds;
     private T data;
 
     private Octree<T>[] children;
@@ -18,7 +18,7 @@ public class Octree<T>
     /// A constructor to create a new Octree
     /// </summary>
     /// <param name="bounds"> The 3D cube representing the bounds of the space to be stored in this octree </param>
-    public Octree(Cube bounds)
+    public Octree(Cubiod bounds)
     {
         this.bounds = bounds;
         this.children = null;
@@ -27,7 +27,7 @@ public class Octree<T>
     #region Functions
 
     /// <returns> The bounds of the space in this Octree </returns>
-    public Cube GetBounds() => this.bounds;
+    public Cubiod GetBounds() => this.bounds;
 
     /// <summary>
     /// A method to divide the bounds of this Octree to 8 equal sized children
@@ -51,7 +51,7 @@ public class Octree<T>
             Vector3 min = this.bounds.min + offset;
             Vector3 max = min + childSize;
 
-            Cube childBounds = new Cube(min, max);
+            Cubiod childBounds = new Cubiod(min, max);
             this.children[i] = new Octree<T>(childBounds);
         }
     }
@@ -71,7 +71,7 @@ public class Octree<T>
     public void DeleteChildren() => this.children = null;
 
     /// <returns> True if this node is a leaf, false otherwise </returns>
-    public bool IsLeaf() => this.children == null && this.data != null;
+    public bool IsLeaf() => this.children == null;
 
     // Quick access to octree child nodes
     public Octree<T> this[int i]

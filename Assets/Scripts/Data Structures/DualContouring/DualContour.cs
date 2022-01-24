@@ -11,19 +11,111 @@ public class DualContour
     public delegate float Density(float x, float y, float z);
     public delegate bool Condition<T>(T item);
 
-    // Cube edge data
-    private static readonly int[] edgeA = {0, 0, 1, 2, 4, 4, 5, 6, 0, 1, 2, 3};
-    private static readonly int[] edgeB = {1, 2, 3, 3, 5, 6, 7, 7, 4, 5, 6, 7};
-
-    // Quad order for triangulation
-    private static readonly int[][] quads = new int[][]
+    // Mesh reconstruction
+    private static readonly int[,] cellProcFaceMask = 
     {
-        new int[] {0, 1, 2, 3},
-        new int[] {4, 5, 6, 7},
-        new int[] {0, 4, 2, 6},
-        new int[] {1, 5, 3, 7},
-        new int[] {0, 1, 4, 5},
-        new int[] {2, 3, 6, 7}
+        {0, 4, 0},
+        {1, 5, 0},
+        {2, 6, 0},
+        {3, 7, 0},
+        {0, 2, 1},
+        {4, 6, 1},
+        {1, 3, 1},
+        {5, 7, 1},
+        {0, 1, 2},
+        {2, 3, 2},
+        {4, 5, 2},
+        {6, 7, 2}
+    };
+
+    private static readonly int[,,] faceProcFaceMask = 
+    {
+	    {
+            {4, 0, 0},
+            {5, 1, 0},
+            {6, 2, 0},
+            {7, 3, 0}
+        },
+	    {
+            {2, 0, 1},
+            {6, 4, 1},
+            {3, 1, 1},
+            {7, 5, 1}
+        },
+	    {
+            {1, 0, 2},
+            {3, 2, 2},
+            {5, 4, 2},
+            {7, 6, 2}
+        }
+    };
+
+    private static readonly int[,] orders =
+    {
+        {0, 0, 1, 1},
+        {0, 1, 0, 1},
+    };
+
+    private static readonly int[,,] faceProcEdgeMask = 
+    {
+        {
+            {1, 4, 0, 5, 1, 1},
+            {1, 6, 2, 7, 3, 1},
+            {0, 4, 6, 0, 2, 2},
+            {0, 5, 7, 1, 3, 2}
+        },
+        {
+            {0, 2, 3, 0, 1, 0},
+            {0, 6, 7, 4, 5, 0},
+            {1, 2, 0, 6, 4, 2},
+            {1, 3, 1, 7, 5, 2}
+        },
+        {
+            {1, 1, 0, 3, 2, 0},
+            {1, 5, 4, 7, 6, 0},
+            {0, 1, 5, 0, 4, 1},
+            {0, 3, 7, 2, 6, 1}
+        }
+    };
+
+    private static readonly int[,,] edgeProcEdgeMask = 
+    {
+	    {
+            {3,2,1,0,0},
+            {7,6,5,4,0}
+        },
+	    {
+            {5,1,4,0,1},
+            {7,3,6,2,1}
+        },
+	    {
+            {6,4,2,0,2},
+            {7,5,3,1,2}
+        },
+    };
+
+    private static readonly int[,] edgevmap = 
+    {
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}, // X - axis
+        {0, 2}, {1, 3}, {4, 6}, {5, 7}, // Y - axis
+        {0, 1}, {4, 5}, {2, 3}, {6, 7}  // Z - axis
+    };
+
+    private static readonly int[,] processEdgeMask = 
+    {
+        {3, 2, 1, 0},
+        {7, 5, 6, 4},
+        {11, 10, 9, 8}
+    };
+
+    private static readonly int[,] cellProcEdgeMask = 
+    {
+        {0, 1, 2, 3, 0},
+        {4, 5, 6, 7, 0},
+        {0, 4, 1, 5, 1},
+        {2, 6, 3, 7, 1},
+        {0, 2, 4, 6, 2},
+        {1, 3, 5, 7, 2}
     };
 
     // Hyperparameters for QEF fixes
@@ -37,11 +129,15 @@ public class DualContour
     #region Variables
 
     // Field parameters
-    private Cube bounds;
+    private Cubiod bounds;
     private Density function;
+    private float isoLevel;
 
     // The rendered shape
     private Octree<QEF> root;
+
+    // Density cache
+    private Dictionary<Vector3, float> DensityMap;
 
     #endregion
 
@@ -71,8 +167,17 @@ public class DualContour
     /// <param name="function"> The density function </param>
     /// <param name="isoLevel"> The value of the density function edge </param>
     /// <returns> A list of all points of intersection </returns>
-    private List<Vector3> FindIntersections(Cube bounds, Density function, float isoLevel) 
+    private List<Vector3> FindIntersections(Cubiod bounds, Density function, float isoLevel) 
     {
+        // A macro to quicly access the density cache
+        float CacheLookUp(Vector3 key)
+        {
+            if (!this.DensityMap.ContainsKey(key))
+                DensityMap.Add(key, function(key.x, key.y, key.z));
+            return this.DensityMap[key];
+        }
+
+        // Lists for corners and intersections
         List<Vector3> corners = bounds.GetCorners();
         List<Vector3> intersections = new List<Vector3>();
 
@@ -80,16 +185,16 @@ public class DualContour
         for (int i = 0; i < 12; i++)
         {
             // Get its 2 vertices
-            Vector3 v1 = corners[edgeA[i]];
-            Vector3 v2 = corners[edgeB[i]];
+            Vector3 v1 = corners[edgevmap[i, 0]];
+            Vector3 v2 = corners[edgevmap[i, 1]];
 
             // Compute their density
-            float v1Density = function(v1.x, v1.y, v1.z);
-            float v2Density = function(v2.x, v2.y, v2.z);
+            float v1Density = CacheLookUp(v1);
+            float v2Density = CacheLookUp(v2);
 
             // Check if above or below isoLevel
-            bool v1Sign = v1Density < isoLevel;
-            bool v2Sign = v2Density < isoLevel;
+            bool v1Sign = v1Density <= isoLevel;
+            bool v2Sign = v2Density <= isoLevel;
 
             // Check if edge intersects isoLevel
             if (v1Sign != v2Sign)
@@ -154,7 +259,7 @@ public class DualContour
     /// <param name="bounds"> The bounds of work </param>
     /// <param name="err"> The QEF to solve </param>
     /// <returns> A point the minimizes the QEF inside the given bounds </returns>
-    private float[] ApplyConstraint(Cube bounds, QEF err)
+    private float[] ApplyConstraint(Cubiod bounds, QEF err)
     {
         // A function to filter invalid points
         bool Bounded(float[] result)
@@ -226,7 +331,7 @@ public class DualContour
     /// <param name="normals"> A list containing the normal of each intersection point </param>
     /// <param name="bounds"> The bounds of work </param>
     /// <returns> The point the minimizes the QEF and it's error in a array in this format {point.x, point.y, point.z, Error(point)} </returns>
-    private QEF CreateQEF(List<Vector3> intersections, List<Vector3> normals, Cube bounds)
+    private QEF CreateQEF(List<Vector3> intersections, List<Vector3> normals, Cubiod bounds)
     {
         // Add terms to the QEF to add a bias towards the average point of intersection
         if (BIAS_FIX)
@@ -282,7 +387,7 @@ public class DualContour
     private bool ProcessNode(Octree<QEF> node, Density function, float isoLevel)
     {
         // Compute intersections
-        Cube bounds = node.GetBounds();
+        Cubiod bounds = node.GetBounds();
         List<Vector3> intersections = this.FindIntersections(bounds, function, isoLevel);
 
         // If cube is fully inside or oustide the shape trim this branch
@@ -334,12 +439,12 @@ public class DualContour
         // Attempt to simplify the root node
         QEF err = this.Simplify(root, function);
 
-        // If simplification succeeded and is under the given tolernce value
+        // If simplification is possible
         if (err != null)
         {
             // Compute simlified value
             float[] soultion = err.Solve();
-            Cube bounds = root.GetBounds();
+            Cubiod bounds = root.GetBounds();
 
             // If not in bounds apply constraint
             if (!bounds.Contains(new Vector3(soultion[0], soultion[1], soultion[2])))
@@ -355,7 +460,7 @@ public class DualContour
             if (soultion[3] >= simplificationTolerenceValue)
                 return true;
 
-            // Set root as pseudo leaf
+            // Set root as leaf
             root.DeleteChildren();
             root.SetData(err);
         }
@@ -366,9 +471,209 @@ public class DualContour
 
     #region Mesh generation
 
+    /// <summary>
+    /// A method to convert a given quad to triangles
+    /// </summary>
+    /// <param name="nodes"> The quad nodes </param>
+    /// <param name="direction"> The direction of the edge </param>
+    /// <param name="vertices"> The vertex list </param>
+    /// <param name="indices"> The trinagle ordering list </param>
+    private void ContourProcessEdge(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    {
+        // Control parameters
+        int[] ptrs = {-1, -1, -1, -1};
+        bool[] signChange = {false, false, false, false};
+
+        float minSize = float.PositiveInfinity;
+        int minIndex = 0;
+        bool flip = false;
+
+        // For each vertex in quad
+        for (int i = 0; i < 4; i++)
+        {
+            Cubiod bounds = nodes[i].GetBounds();
+            List<Vector3> corners = bounds.GetCorners();
+
+            float size = bounds.size.x;
+            int edge = processEdgeMask[direction, i];
+
+            // Check for sign change in edge crossing
+            bool c0Sign = this.DensityMap[corners[edgevmap[edge, 0]]] <= this.isoLevel;
+            bool c1Sign = this.DensityMap[corners[edgevmap[edge, 1]]] <= this.isoLevel;
+            signChange[i] = c0Sign != c1Sign;
+
+            // Find smallest cell
+            if (size < minSize)
+            {
+                minSize = size;
+                minIndex = i;
+                flip = c0Sign;
+            }
+
+            // Create vertex and add to list
+            ptrs[i] = vertices.Count;
+            float[] vertex = nodes[i].GetData().GetLastResult();
+            vertices.Add(new Vector3(vertex[0], vertex[1], vertex[2]));
+        }
+
+        // Render quad id needed
+        if (signChange[minIndex])
+        {
+            // Flip surfce normals if needed
+            if (flip)
+            {
+                indices.Add(ptrs[0]);
+                indices.Add(ptrs[1]);
+                indices.Add(ptrs[3]);
+
+                indices.Add(ptrs[0]);
+                indices.Add(ptrs[3]);
+                indices.Add(ptrs[2]);
+            }
+            else
+            {
+                indices.Add(ptrs[0]);
+                indices.Add(ptrs[3]);
+                indices.Add(ptrs[1]);
+
+                indices.Add(ptrs[0]);
+                indices.Add(ptrs[2]);
+                indices.Add(ptrs[3]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A method to connect edges along a face
+    /// </summary>
+    /// <param name="nodes"> The edges of the face </param>
+    /// <param name="direction"> The connection direction </param>
+    /// <param name="vertices"> The vertex list </param>
+    /// <param name="indices"> The trinagle ordering list </param>
+    private void ContourEdgeProc(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    {
+        // Check input validity
+        bool allLeaves = true;
+        for (int i = 0; i < 4; i++)
+        {
+            if (nodes[i] == null)
+                return;
+            else if (!nodes[i].IsLeaf())
+                allLeaves = false;
+        }
+
+        // If all are leaves build all triangles
+        if (allLeaves)
+            this.ContourProcessEdge(nodes, direction, vertices, indices);
+        // Resolve all adjecnt edges
+        else
+            for (int i = 0; i < 2; i++)
+            {
+                Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+                for (int j = 0; j < 4; j++)
+                    edgeNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][edgeProcEdgeMask[direction, i, j]];
+
+                this.ContourEdgeProc(edgeNodes, edgeProcEdgeMask[direction, i, 4], vertices, indices);
+            }
+    }
+
+    /// <summary>
+    /// A method to connect faces along a given edge
+    /// </summary>
+    /// <param name="nodes"> The nodes of quad edge </param>
+    /// <param name="direction"> The connection direction </param>
+    /// <param name="vertices"> The vertex list </param>
+    /// <param name="indices"> The trinagle ordering list </param>
+    private void ContourFaceProc(Octree<QEF>[] nodes, int direction, List<Vector3> vertices, List<int> indices) 
+    {
+        // If one of the nodes is null face dosnt exist
+        if (nodes[0] == null || nodes[1] == null)
+            return;
+        
+        // If all are leaves nothing can be done
+        if (nodes[0].IsLeaf() && nodes[1].IsLeaf())
+            return;
+
+        // Resolve all adjecnt faces
+        for (int i = 0; i < 4; i++)
+        {
+            Octree<QEF>[] faceNodes = new Octree<QEF>[2];
+            for (int j = 0; j < 2; j++)
+                faceNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][faceProcFaceMask[direction, i, j]];
+
+            this.ContourFaceProc(faceNodes, faceProcFaceMask[direction, i, 2], vertices, indices);
+        }
+
+        // Resolve all adjecnt edges
+        for (int i = 0; i < 4; i++)
+        {
+            Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+            int order = faceProcEdgeMask[direction, i, 0];
+
+            for (int j = 0; j < 4; j++)
+            {
+                Octree<QEF> node = nodes[orders[order, j]];
+                edgeNodes[j] = node.IsLeaf() ? node : node[faceProcEdgeMask[direction, i, j + 1]];
+            }
+
+            this.ContourEdgeProc(edgeNodes, faceProcEdgeMask[direction, i, 5], vertices, indices);
+        }
+    }
+
+    /// <summary>
+    /// A method to triangulate a octree cell
+    /// </summary>
+    /// <param name="node"> The cell to process </param>
+    /// <param name="vertices"> The vertex list </param>
+    /// <param name="indices"> The trinagle ordering list </param>
+    private void ContourCellProc(Octree<QEF> node, List<Vector3> vertices, List<int> indices)
+    {
+        // If node is leaf nothing can be done
+        if (node.IsLeaf())
+            return;
+
+        // Resolve each child
+        for (int i = 0; i < 8; i++)
+            if (node[i] != null)
+                this.ContourCellProc(node[i], vertices, indices);
+
+        // Check for crossings on each edge
+        for (int i = 0; i < 12; i++)
+        {
+            Octree<QEF>[] faceNodes = 
+            {
+                node[cellProcFaceMask[i, 0]],
+                node[cellProcFaceMask[i, 1]]
+            };
+
+            this.ContourFaceProc(faceNodes, cellProcFaceMask[i, 2], vertices, indices);
+        }
+
+        // Check for crossings on each face
+        for (int i = 0; i < 6; i++)
+        {
+            Octree<QEF>[] edgeNodes = new Octree<QEF>[4];
+            for (int j = 0; j < 4; j++)
+                edgeNodes[j] = node[cellProcEdgeMask[i, j]];
+
+            this.ContourEdgeProc(edgeNodes, cellProcEdgeMask[i, 4], vertices, indices);
+        }
+    }
+
     private Mesh BuildMesh(Octree<QEF> root)
     {
-        return null;
+        // Create triangles
+        List<Vector3> vertices = new List<Vector3>();
+        List<int> indices = new List<int>();
+        this.ContourCellProc(root, vertices, indices);
+        
+        // Create mesh
+        Mesh mesh = new Mesh();
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(indices, 0);
+        mesh.RecalculateBounds();
+        mesh.RecalculateNormals();
+        return mesh;
     }
 
     /// <summary>
@@ -380,9 +685,15 @@ public class DualContour
     /// <returns> A mesh of the contuor </returns>
     public Mesh Generate(float isoLevel, float simplificationTolerenceValue, int maxOctreeDepth)
     {
+        // Build octree
+        this.isoLevel = isoLevel;
         this.root = new Octree<QEF>(this.bounds);
         this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth);
-        return this.BuildMesh(this.root);
+
+        // Generate mesh and clear cache
+        Mesh mesh = this.BuildMesh(this.root);
+        this.DensityMap.Clear();
+        return mesh;
     }
 
     #endregion
@@ -392,41 +703,13 @@ public class DualContour
     /// </summary>
     /// <param name="bounds"> The bounds to sample </param>
     /// <param name="function"> A implicit density function representing the shape to contuor </param>
-    public DualContour(Cube bounds, Density function)
+    public DualContour(Cubiod bounds, Density function)
     {
         this.bounds = bounds;
         this.function = function;
+        this.isoLevel = 0f;
+
+        this.DensityMap = new Dictionary<Vector3, float>();
     }
-
-    // FIXME: Debug zone
-
-    private void Get(Octree<QEF> root, List<Vector3> result)
-    {
-        if (root.GetData() != null)
-        {
-            float[] data = root.GetData().GetLastResult();
-            result.Add(new Vector3(data[0], data[1], data[2]));
-            return;
-        }
-
-        for (int i = 0; i < 8; i++)
-            if (root[i] != null)
-                Get(root[i], result);
-    }
-
-    public List<Vector3> GetVertexes()
-    {
-        List<Vector3> result = new List<Vector3>();
-        this.Get(this.root, result);
-        return result;
-    }
-
-    /*
-    
-    TODO:
-    1. Test the new octree building - done
-    2. Triangulation
-    
-    */
 
 }
