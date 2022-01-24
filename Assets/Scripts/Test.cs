@@ -6,7 +6,11 @@ public class Test : MonoBehaviour
 {
 
     // TODO: 
-    // Figure out why some quads are skipped
+    // 1. Add mesh splitting for massive shapes
+    // 2. Mutlithreading / Multiprocessing
+    // FIXME: 
+    // 1. When simplifying unnecessary quads are rendered - fixed!
+    // 2. Some quad are missing from complicated shapes in high LOD's
 
     public Material mat;
 
@@ -30,8 +34,12 @@ public class Test : MonoBehaviour
             return Mathf.Max(X, Y, Z) - size;
         };
 
-        this.shape = new DualContour(bounds, heart);
-        Mesh m = this.shape.Generate(0f, 6e-6f, 6);
+        DualContour.Density noise = (x, y, z) => {
+            return y - Mathf.PerlinNoise(x, z);
+        };
+
+        this.shape = new DualContour(bounds, noise);
+        Mesh m = this.shape.Generate(0f, 1e-5f, 6);
 
         this.gameObject.AddComponent<MeshFilter>().mesh = m;
         this.gameObject.AddComponent<MeshRenderer>().material = this.mat;

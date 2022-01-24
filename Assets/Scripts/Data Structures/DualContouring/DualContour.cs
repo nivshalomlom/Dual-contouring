@@ -136,9 +136,6 @@ public class DualContour
     // The rendered shape
     private Octree<NodeData> root;
 
-    // Density cache
-    private Dictionary<Vector3, float> DensityMap;
-
     #endregion
 
     #region Utility functions
@@ -167,34 +164,35 @@ public class DualContour
     /// <param name="function"> The density function </param>
     /// <param name="isoLevel"> The value of the density function edge </param>
     /// <returns> A list of all points of intersection </returns>
-    private List<Vector3> FindIntersections(Cubiod bounds, Density function, float isoLevel) 
+    private List<Vector3> FindIntersections(Cubiod bounds, Density function, float isoLevel, out int cornerEncoding) 
     {
-        // A macro to quicly access the density cache
-        float CacheLookUp(Vector3 key)
-        {
-            if (!this.DensityMap.ContainsKey(key))
-                DensityMap.Add(key, function(key.x, key.y, key.z));
-            return this.DensityMap[key];
-        }
-
         // Lists for corners and intersections
         List<Vector3> corners = bounds.GetCorners();
         List<Vector3> intersections = new List<Vector3>();
 
         // Foreach edge
+        cornerEncoding = 0;
         for (int i = 0; i < 12; i++)
         {
+            int v1Index = edgevmap[i, 0];
+            int v2Index = edgevmap[i, 1];
             // Get its 2 vertices
-            Vector3 v1 = corners[edgevmap[i, 0]];
-            Vector3 v2 = corners[edgevmap[i, 1]];
+            Vector3 v1 = corners[v1Index];
+            Vector3 v2 = corners[v2Index];
 
             // Compute their density
-            float v1Density = CacheLookUp(v1);
-            float v2Density = CacheLookUp(v2);
+            float v1Density = function(v1.x, v1.y, v1.z);
+            float v2Density = function(v2.x, v2.y, v2.z);
 
             // Check if above or below isoLevel
             bool v1Sign = v1Density <= isoLevel;
             bool v2Sign = v2Density <= isoLevel;
+
+            // Update cornerEncoding
+            if (v1Sign)
+                cornerEncoding |= 1 << v1Index;
+            if (v2Sign)
+                cornerEncoding |= 1 << v2Index;
 
             // Check if edge intersects isoLevel
             if (v1Sign != v2Sign)
@@ -355,28 +353,35 @@ public class DualContour
     {
         public QEF qef;
         public Vector3 vertex;
+        public int cornerEncoding;
 
         /// <summary>
         /// A constructor to build a new NodeData struct
         /// </summary>
         /// <param name="qef"> The qef of the node </param>
         /// <param name="vertex"> The result of said qef </param>
-        public NodeData(QEF qef, Vector3 vertex)
+        /// <param name="cornerEncoding"> A number whose bits represent what corners crossed the boundry </param>
+        public NodeData(QEF qef, Vector3 vertex, int cornerEncoding)
         {
             this.qef = qef;
             this.vertex = vertex;
+            this.cornerEncoding = cornerEncoding;
         }
 
     }
 
     /// <summary>
-    /// A method to try a simplfy a given octree root into a single vertex
+    /// A method to try and simplify a given octree node
     /// </summary>
     /// <param name="root"> The node to simplify </param>
-    /// <param name="function"> The density function of the scalar field the octree is tiling </param>
-    /// <returns> A QEF if a simplification is possible, null otherwise </returns>
-    private QEF Simplify(Octree<NodeData> root, Density function)
+    /// <param name="function"> The function we are contuoring </param>
+    /// <param name="simplificationTolerenceValue"> The maximum error value the a simplification can have to be accepted </param>
+    private void Simplify(Octree<NodeData> root, Density function, float simplificationTolerenceValue)
     {
+        // Signs to approximate corner encoding
+        int[] signs = {-1, -1, -1, -1, -1, -1, -1, -1};
+	    int midSign = -1;
+
         // Sum all child QEF's
         QEF sum = null;
         for (int i = 0; i < 8; i++)
@@ -387,14 +392,42 @@ public class DualContour
             // Child not lead, cant simplify
             QEF data = root[i].GetData().qef;
             if (data == null)
-                return null;
+                return;
 
+            // Accumulate qef
             if (sum == null)
                 sum = data;
             else sum += data;
+
+            // Update signs
+            int encoding = root[i].GetData().cornerEncoding;
+            signs[i] = (encoding>> i) & 1;
+            midSign = (encoding >> (7 - i)) & 1;
         }
 
-        return sum;
+        // Solve sum QEF and bound if needed
+        float[] soultion = sum.Solve();
+        if (!bounds.Contains(new Vector3(soultion[0], soultion[1], soultion[2])))
+        {
+            float[] bounded = this.ApplyConstraint(bounds, sum);
+            soultion[0] = bounded[0];
+            soultion[1] = bounded[1];
+            soultion[2] = bounded[2];
+            soultion[3] = sum.Evaluate(bounded);
+        }
+
+        // Reject simplification if error is to high
+        if (soultion[3] > simplificationTolerenceValue)
+            return;
+
+        // Build the new corner encoding
+        int rootCorners = 0;
+        for (int i = 0; i < 8; i++)
+            rootCorners |= (signs[i] == -1 ? midSign : signs[i]) << i;
+
+        // Turn root in a pseado leaf
+        root.DeleteChildren();
+        root.SetData(new NodeData(sum, new Vector3(soultion[0], soultion[1], soultion[2]), rootCorners));
     }
 
     /// <summary>
@@ -407,8 +440,9 @@ public class DualContour
     private bool ProcessNode(Octree<NodeData> node, Density function, float isoLevel)
     {
         // Compute intersections
+        int encoding;
         Cubiod bounds = node.GetBounds();
-        List<Vector3> intersections = this.FindIntersections(bounds, function, isoLevel);
+        List<Vector3> intersections = this.FindIntersections(bounds, function, isoLevel, out encoding);
 
         // If cube is fully inside or oustide the shape trim this branch
         if (intersections.Count == 0 || intersections.Count == 8)
@@ -421,7 +455,7 @@ public class DualContour
         // Solve QEF and store result in this node
         QEF qef = this.CreateQEF(intersections, normals, bounds);
         float[] result = qef.Solve();
-        node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2])));
+        node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2]), encoding));
         return true;
     }
 
@@ -458,33 +492,7 @@ public class DualContour
             return false;
 
         // Attempt to simplify the root node
-        QEF err = this.Simplify(root, function);
-
-        // If simplification is possible
-        if (err != null)
-        {
-            // Compute simlified value
-            float[] soultion = err.Solve();
-            Cubiod bounds = root.GetBounds();
-
-            // If not in bounds apply constraint
-            if (!bounds.Contains(new Vector3(soultion[0], soultion[1], soultion[2])))
-            {
-                float[] bounded = this.ApplyConstraint(bounds, err);
-                soultion[0] = bounded[0];
-                soultion[1] = bounded[1];
-                soultion[2] = bounded[2];
-                soultion[3] = err.Evaluate(bounded);
-            }
-
-            // If above tolernce value reject
-            if (soultion[3] >= simplificationTolerenceValue)
-                return true;
-
-            // Set root as leaf
-            root.DeleteChildren();
-            root.SetData(new NodeData(err, new Vector3(soultion[0], soultion[1], soultion[2])));
-        }
+        this.Simplify(root, function, simplificationTolerenceValue);
         return true;
     }
 
@@ -517,10 +525,11 @@ public class DualContour
 
             float size = bounds.size.x;
             int edge = processEdgeMask[direction, i];
+            int encoding = nodes[i].GetData().cornerEncoding;
 
             // Check for sign change in edge crossing
-            bool c0Sign = this.DensityMap[corners[edgevmap[edge, 0]]] <= this.isoLevel;
-            bool c1Sign = this.DensityMap[corners[edgevmap[edge, 1]]] <= this.isoLevel;
+            bool c0Sign = (encoding & 1 << edgevmap[edge, 0]) > 0;
+            bool c1Sign = (encoding & 1 << edgevmap[edge, 1]) > 0;
             signChange[i] = c0Sign != c1Sign;
 
             // Find smallest cell
@@ -712,7 +721,6 @@ public class DualContour
 
         // Generate mesh and clear cache
         Mesh mesh = this.BuildMesh(this.root);
-        this.DensityMap.Clear();
         return mesh;
     }
 
@@ -728,8 +736,6 @@ public class DualContour
         this.bounds = bounds;
         this.function = function;
         this.isoLevel = 0f;
-
-        this.DensityMap = new Dictionary<Vector3, float>();
     }
 
 }
