@@ -12,6 +12,8 @@ public class DualContour
     public delegate bool Condition<T>(T item);
 
     // Mesh reconstruction
+    private static int MAX_VERTS_PER_MESH = 30000;
+
     private static readonly int[,] cellProcFaceMask = 
     {
         {0, 4, 0},
@@ -502,14 +504,39 @@ public class DualContour
     #region Mesh generation
 
     /// <summary>
+    /// A method to create a new mesh and add it to the provided mesh list
+    /// </summary>
+    /// <param name="vertices"> The mesh vertices </param>
+    /// <param name="indices"> The mesh triangles </param>
+    /// <param name="meshes"> The mesh list </param>
+    private void CreateMesh(List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
+    {
+        // Create new mesh
+        Mesh mesh = new Mesh();
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(indices, 0);
+        mesh.RecalculateBounds();
+        mesh.RecalculateNormals();
+
+        // Add new mesh to list add clear buffers
+        meshes.Add(mesh);
+        vertices.Clear();
+        indices.Clear();
+    }
+
+    /// <summary>
     /// A method to convert a given quad to triangles
     /// </summary>
     /// <param name="nodes"> The quad nodes </param>
     /// <param name="direction"> The direction of the edge </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourProcessEdge(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    private void ContourProcessEdge(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
     {
+        // Collapse buffers to mesh if needed
+        if (vertices.Count + 4 > MAX_VERTS_PER_MESH)
+            this.CreateMesh(vertices, indices, meshes);
+
         // Control parameters
         int[] ptrs = {-1, -1, -1, -1};
         bool[] signChange = {false, false, false, false};
@@ -586,7 +613,7 @@ public class DualContour
     /// <param name="direction"> The connection direction </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourEdgeProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices)
+    private void ContourEdgeProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
     {
         // Check input validity
         bool allLeaves = true;
@@ -600,7 +627,7 @@ public class DualContour
 
         // If all are leaves build all triangles
         if (allLeaves)
-            this.ContourProcessEdge(nodes, direction, vertices, indices);
+            this.ContourProcessEdge(nodes, direction, vertices, indices, meshes);
         // Resolve all adjecnt edges
         else
             for (int i = 0; i < 2; i++)
@@ -609,7 +636,7 @@ public class DualContour
                 for (int j = 0; j < 4; j++)
                     edgeNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][edgeProcEdgeMask[direction, i, j]];
 
-                this.ContourEdgeProc(edgeNodes, edgeProcEdgeMask[direction, i, 4], vertices, indices);
+                this.ContourEdgeProc(edgeNodes, edgeProcEdgeMask[direction, i, 4], vertices, indices, meshes);
             }
     }
 
@@ -620,7 +647,7 @@ public class DualContour
     /// <param name="direction"> The connection direction </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourFaceProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices) 
+    private void ContourFaceProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes) 
     {
         // If one of the nodes is null face dosnt exist
         if (nodes[0] == null || nodes[1] == null)
@@ -637,7 +664,7 @@ public class DualContour
             for (int j = 0; j < 2; j++)
                 faceNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][faceProcFaceMask[direction, i, j]];
 
-            this.ContourFaceProc(faceNodes, faceProcFaceMask[direction, i, 2], vertices, indices);
+            this.ContourFaceProc(faceNodes, faceProcFaceMask[direction, i, 2], vertices, indices, meshes);
         }
 
         // Resolve all adjacent edges
@@ -652,7 +679,7 @@ public class DualContour
                 edgeNodes[j] = node.IsLeaf() ? node : node[faceProcEdgeMask[direction, i, j + 1]];
             }
 
-            this.ContourEdgeProc(edgeNodes, faceProcEdgeMask[direction, i, 5], vertices, indices);
+            this.ContourEdgeProc(edgeNodes, faceProcEdgeMask[direction, i, 5], vertices, indices, meshes);
         }
     }
 
@@ -662,7 +689,7 @@ public class DualContour
     /// <param name="node"> The cell to process </param>
     /// <param name="vertices"> The vertex list </param>
     /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourCellProc(Octree<NodeData> node, List<Vector3> vertices, List<int> indices)
+    private void ContourCellProc(Octree<NodeData> node, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
     {
         // If node is leaf nothing can be done
         if (node.IsLeaf())
@@ -671,7 +698,7 @@ public class DualContour
         // Resolve each child
         for (int i = 0; i < 8; i++)
             if (node[i] != null)
-                this.ContourCellProc(node[i], vertices, indices);
+                this.ContourCellProc(node[i], vertices, indices, meshes);
 
         // Check for crossings on each edge
         for (int i = 0; i < 12; i++)
@@ -682,7 +709,7 @@ public class DualContour
                 node[cellProcFaceMask[i, 1]]
             };
 
-            this.ContourFaceProc(faceNodes, cellProcFaceMask[i, 2], vertices, indices);
+            this.ContourFaceProc(faceNodes, cellProcFaceMask[i, 2], vertices, indices, meshes);
         }
 
         // Check for crossings on each face
@@ -692,7 +719,7 @@ public class DualContour
             for (int j = 0; j < 4; j++)
                 edgeNodes[j] = node[cellProcEdgeMask[i, j]];
 
-            this.ContourEdgeProc(edgeNodes, cellProcEdgeMask[i, 4], vertices, indices);
+            this.ContourEdgeProc(edgeNodes, cellProcEdgeMask[i, 4], vertices, indices, meshes);
         }
     }
 
@@ -701,20 +728,20 @@ public class DualContour
     /// </summary>
     /// <param name="root"> The root of the octree to start building from </param>
     /// <returns> The mesh of the contuor </returns>
-    private Mesh BuildMesh(Octree<NodeData> root)
+    private List<Mesh> BuildMesh(Octree<NodeData> root)
     {
-        // Create triangles
+        // Create lists for mesh data
         List<Vector3> vertices = new List<Vector3>();
         List<int> indices = new List<int>();
-        this.ContourCellProc(root, vertices, indices);
+        List<Mesh> meshes = new List<Mesh>();
         
-        // Create mesh
-        Mesh mesh = new Mesh();
-        mesh.SetVertices(vertices);
-        mesh.SetTriangles(indices, 0);
-        mesh.RecalculateBounds();
-        mesh.RecalculateNormals();
-        return mesh;
+        // Create meshes
+        this.ContourCellProc(root, vertices, indices, meshes);
+        if (vertices.Count > 0)
+            this.CreateMesh(vertices, indices, meshes);
+
+        // Return meshes
+        return meshes;
     }
 
     /// <summary>
@@ -724,7 +751,7 @@ public class DualContour
     /// <param name="simplificationTolerenceValue"> The error threshold for simplifying octree nodes </param>
     /// <param name="maxOctreeDepth"> The level of detail for the octree, max number of vertexes = 8 ^ maxOctreeDepth </param>
     /// <returns> A mesh of the contuor </returns>
-    public Mesh Generate(float isoLevel, float simplificationTolerenceValue, int maxOctreeDepth)
+    public List<Mesh> Generate(float isoLevel, float simplificationTolerenceValue, int maxOctreeDepth)
     {
         // Build octree
         this.isoLevel = isoLevel;
@@ -732,8 +759,7 @@ public class DualContour
         this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth);
 
         // Generate mesh and clear cache
-        Mesh mesh = this.BuildMesh(this.root);
-        return mesh;
+        return this.BuildMesh(this.root);
     }
 
     #endregion

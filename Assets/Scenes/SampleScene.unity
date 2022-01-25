@@ -312,4 +312,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 043e6f2751236a3459844efe9a757a2e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  mat: {fileID: 2100000, guid: d10a2a9117cfa0546b5eabdfb7453d1e, type: 2}
+  color: {fileID: 2100000, guid: d10a2a9117cfa0546b5eabdfb7453d1e, type: 2}
