@@ -98,7 +98,7 @@ public class DualContour
     {
         {0, 4}, {1, 5}, {2, 6}, {3, 7}, // X - axis
         {0, 2}, {1, 3}, {4, 6}, {5, 7}, // Y - axis
-        {0, 1}, {4, 5}, {2, 3}, {6, 7}  // Z - axis
+        {0, 1}, {2, 3}, {4, 5}, {6, 7}  // Z - axis
     };
 
     private static readonly int[,] processEdgeMask = 
@@ -353,7 +353,7 @@ public class DualContour
     {
         public QEF qef;
         public Vector3 vertex;
-        public int cornerEncoding;
+        public int cornerEncoding, index;
 
         /// <summary>
         /// A constructor to build a new NodeData struct
@@ -366,6 +366,7 @@ public class DualContour
             this.qef = qef;
             this.vertex = vertex;
             this.cornerEncoding = cornerEncoding;
+            this.index = -1;
         }
 
     }
@@ -520,16 +521,18 @@ public class DualContour
         // For each vertex in quad
         for (int i = 0; i < 4; i++)
         {
+            // Node bounds and data
             Cubiod bounds = nodes[i].GetBounds();
-            List<Vector3> corners = bounds.GetCorners();
+            NodeData data = nodes[i].GetData();
 
+            // Node size and edge data
             float size = bounds.size.x;
             int edge = processEdgeMask[direction, i];
-            int encoding = nodes[i].GetData().cornerEncoding;
+            int encoding = data.cornerEncoding;
 
             // Check for sign change in edge crossing
-            bool c0Sign = (encoding & 1 << edgevmap[edge, 0]) > 0;
-            bool c1Sign = (encoding & 1 << edgevmap[edge, 1]) > 0;
+            bool c0Sign = ((encoding >> edgevmap[edge, 0]) & 1) > 0;
+            bool c1Sign = ((encoding >> edgevmap[edge, 1]) & 1) > 0;
             signChange[i] = c0Sign != c1Sign;
 
             // Find smallest cell
@@ -540,9 +543,13 @@ public class DualContour
                 flip = c0Sign;
             }
 
-            // Create vertex and add to list
-            ptrs[i] = vertices.Count;
-            vertices.Add(nodes[i].GetData().vertex);
+            // Prevent duplicates vertices
+            if (data.index == -1)
+            {
+                data.index = vertices.Count;
+                vertices.Add(data.vertex);
+            }
+            ptrs[i] = data.index;
         }
 
         // Render quad id needed
@@ -623,7 +630,7 @@ public class DualContour
         if (nodes[0].IsLeaf() && nodes[1].IsLeaf())
             return;
 
-        // Resolve all adjecnt faces
+        // Resolve all adjacent faces
         for (int i = 0; i < 4; i++)
         {
             Octree<NodeData>[] faceNodes = new Octree<NodeData>[2];
@@ -633,7 +640,7 @@ public class DualContour
             this.ContourFaceProc(faceNodes, faceProcFaceMask[direction, i, 2], vertices, indices);
         }
 
-        // Resolve all adjecnt edges
+        // Resolve all adjacent edges
         for (int i = 0; i < 4; i++)
         {
             Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
@@ -689,6 +696,11 @@ public class DualContour
         }
     }
 
+    /// <summary>
+    /// A method to build the contuor's mesh
+    /// </summary>
+    /// <param name="root"> The root of the octree to start building from </param>
+    /// <returns> The mesh of the contuor </returns>
     private Mesh BuildMesh(Octree<NodeData> root)
     {
         // Create triangles

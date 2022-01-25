@@ -8,9 +8,6 @@ public class Test : MonoBehaviour
     // TODO: 
     // 1. Add mesh splitting for massive shapes
     // 2. Mutlithreading / Multiprocessing
-    // FIXME: 
-    // 1. When simplifying unnecessary quads are rendered - fixed!
-    // 2. Some quad are missing from complicated shapes in high LOD's
 
     public Material mat;
 
@@ -20,7 +17,7 @@ public class Test : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        Cubiod bounds = new Cubiod(Vector3.one * -size * 2, Vector3.one * size * 2);
+        Cubiod bounds = new Cubiod(Vector3.one * -size, Vector3.one * size);
 
         DualContour.Density heart = (x, y, z) => {
             float result = 2 * x * x + y * y + z * z - 1;
@@ -34,12 +31,12 @@ public class Test : MonoBehaviour
             return Mathf.Max(X, Y, Z) - size;
         };
 
-        DualContour.Density noise = (x, y, z) => {
-            return y - Mathf.PerlinNoise(x, z);
+        DualContour.Density sphere = (x, y, z) => {
+            return Vector3.Distance(new Vector3(x, y, z), Vector3.zero) - size / 2f;
         };
 
-        this.shape = new DualContour(bounds, noise);
-        Mesh m = this.shape.Generate(0f, 1e-5f, 6);
+        this.shape = new DualContour(bounds, sphere);
+        Mesh m = this.shape.Generate(0f, 0f, 6);
 
         this.gameObject.AddComponent<MeshFilter>().mesh = m;
         this.gameObject.AddComponent<MeshRenderer>().material = this.mat;
