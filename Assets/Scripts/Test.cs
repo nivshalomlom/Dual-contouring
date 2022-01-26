@@ -32,7 +32,7 @@ public class Test : MonoBehaviour
             return Vector3.Distance(new Vector3(x, y, z), Vector3.zero) - sphereRadius / 2f;
         };
 
-        Cubiod bounds = new Cubiod(Vector3.one * -10f, Vector3.one * 10f);
+        Cuboid bounds = new Cuboid(Vector3.one * -10f, Vector3.one * 10f);
         DualContour shape = new DualContour(bounds, sphere);
 
         foreach (Mesh mesh in shape.Generate(0f, 0f, 7))

@@ -9,7 +9,7 @@ using UnityEngine;
 public class Octree<T>
 {
 
-    private Cubiod bounds;
+    private Cuboid bounds;
     private T data;
 
     private Octree<T>[] children;
@@ -18,7 +18,7 @@ public class Octree<T>
     /// A constructor to create a new Octree
     /// </summary>
     /// <param name="bounds"> The 3D cube representing the bounds of the space to be stored in this octree </param>
-    public Octree(Cubiod bounds)
+    public Octree(Cuboid bounds)
     {
         this.bounds = bounds;
         this.children = null;
@@ -27,7 +27,7 @@ public class Octree<T>
     #region Functions
 
     /// <returns> The bounds of the space in this Octree </returns>
-    public Cubiod GetBounds() => this.bounds;
+    public Cuboid GetBounds() => this.bounds;
 
     /// <summary>
     /// A method to divide the bounds of this Octree to 8 equal sized children
@@ -51,7 +51,7 @@ public class Octree<T>
             Vector3 min = this.bounds.min + offset;
             Vector3 max = min + childSize;
 
-            Cubiod childBounds = new Cubiod(min, max);
+            Cuboid childBounds = new Cuboid(min, max);
             this.children[i] = new Octree<T>(childBounds);
         }
     }

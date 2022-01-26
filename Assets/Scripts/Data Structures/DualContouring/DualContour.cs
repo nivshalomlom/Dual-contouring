@@ -131,7 +131,7 @@ public class DualContour
     #region Variables
 
     // Field parameters
-    private Cubiod bounds;
+    private Cuboid bounds;
     private Density function;
     private float isoLevel;
 
@@ -149,7 +149,7 @@ public class DualContour
     /// <param name="filter"> The filter condition </param>
     /// <typeparam name="T"> The type of the items in the list </typeparam>
     /// <returns> A new list containing only the items that satisfy the filter condition </returns>
-    private List<T> FilterList<T>(List<T> list, Condition<T> filter)
+    private static List<T> FilterList<T>(List<T> list, Condition<T> filter)
     {
         List<T> result = new List<T>();
         foreach (T item in list)
@@ -166,7 +166,7 @@ public class DualContour
     /// <param name="function"> The density function </param>
     /// <param name="isoLevel"> The value of the density function edge </param>
     /// <returns> A list of all points of intersection </returns>
-    private List<Vector3> FindIntersections(Cubiod bounds, Density function, float isoLevel, out int cornerEncoding) 
+    private static List<Vector3> FindIntersections(Cuboid bounds, Density function, float isoLevel, out int cornerEncoding) 
     {
         // Lists for corners and intersections
         List<Vector3> corners = bounds.GetCorners();
@@ -214,7 +214,7 @@ public class DualContour
     /// <param name="point"> The point to evalutae </param>
     /// <param name="function"> The density function </param>
     /// <returns> A vector3 representing the gradient </returns>
-    private Vector3 ApproximateGradientAt(Vector3 point, Density function)
+    private static Vector3 ApproximateGradientAt(Vector3 point, Density function)
     {
         float eps = Mathf.Epsilon;
         float tEps = 2f * eps;
@@ -236,7 +236,7 @@ public class DualContour
     /// </summary>
     /// <param name="intersections"> The intersections list </param>
     /// <param name="normals"> The normals list </param>
-    private void AddBias(List<Vector3> intersections, List<Vector3> normals)
+    private static void AddBias(List<Vector3> intersections, List<Vector3> normals)
     {
         // Find the average point of intersection
         Vector3 massPoint = Vector3.zero;
@@ -259,7 +259,7 @@ public class DualContour
     /// <param name="bounds"> The bounds of work </param>
     /// <param name="err"> The QEF to solve </param>
     /// <returns> A point the minimizes the QEF inside the given bounds </returns>
-    private float[] ApplyConstraint(Cubiod bounds, QEF err)
+    private static float[] ApplyConstraint(Cuboid bounds, QEF err)
     {
         // A function to filter invalid points
         bool Bounded(float[] result)
@@ -281,7 +281,7 @@ public class DualContour
         results.Add(err.fixAxis(2, bounds.min.z + size.z).Solve());
 
         // Filter invalid point
-        results = this.FilterList(results, Bounded);
+        results = FilterList(results, Bounded);
 
         // If all points filtered, try the 12 lines bordering the cell
         if (results.Count == 0)
@@ -300,7 +300,7 @@ public class DualContour
             results.Add(err.fixAxis(2, bounds.min.z + size.z).fixAxis(1, bounds.min.y + size.y).Solve());
 
             // Filter invalid point
-            results = this.FilterList(results, Bounded);
+            results = FilterList(results, Bounded);
         }
 
         // If no valid point found try corners of the cube
@@ -331,11 +331,11 @@ public class DualContour
     /// <param name="normals"> A list containing the normal of each intersection point </param>
     /// <param name="bounds"> The bounds of work </param>
     /// <returns> The point the minimizes the QEF and it's error in a array in this format {point.x, point.y, point.z, Error(point)} </returns>
-    private QEF CreateQEF(List<Vector3> intersections, List<Vector3> normals, Cubiod bounds)
+    private static QEF CreateQEF(List<Vector3> intersections, List<Vector3> normals)
     {
         // Add terms to the QEF to add a bias towards the average point of intersection
         if (BIAS_FIX)
-            this.AddBias(intersections, normals);
+            AddBias(intersections, normals);
 
         // Create and solve the QEF
         QEF err = new QEF(intersections, normals);
@@ -379,7 +379,7 @@ public class DualContour
     /// <param name="root"> The node to simplify </param>
     /// <param name="function"> The function we are contuoring </param>
     /// <param name="simplificationTolerenceValue"> The maximum error value the a simplification can have to be accepted </param>
-    private void Simplify(Octree<NodeData> root, Density function, float simplificationTolerenceValue)
+    private void Simplify(Octree<NodeData> root, float simplificationTolerenceValue)
     {
         // Signs to approximate corner encoding
         int[] signs = {-1, -1, -1, -1, -1, -1, -1, -1};
@@ -409,18 +409,18 @@ public class DualContour
         }
 
         // Solve sum QEF and bound if needed
-        float[] soultion = sum.Solve();
-        if (!bounds.Contains(new Vector3(soultion[0], soultion[1], soultion[2])))
+        float[] solution = sum.Solve();
+        if (!bounds.Contains(new Vector3(solution[0], solution[1], solution[2])))
         {
-            float[] bounded = this.ApplyConstraint(bounds, sum);
-            soultion[0] = bounded[0];
-            soultion[1] = bounded[1];
-            soultion[2] = bounded[2];
-            soultion[3] = sum.Evaluate(bounded);
+            float[] bounded = ApplyConstraint(bounds, sum);
+            solution[0] = bounded[0];
+            solution[1] = bounded[1];
+            solution[2] = bounded[2];
+            solution[3] = sum.Evaluate(bounded);
         }
 
         // Reject simplification if error is to high
-        if (soultion[3] > simplificationTolerenceValue)
+        if (solution[3] > simplificationTolerenceValue)
             return;
 
         // Build the new corner encoding
@@ -430,7 +430,7 @@ public class DualContour
 
         // Turn root in a pseado leaf
         root.DeleteChildren();
-        root.SetData(new NodeData(sum, new Vector3(soultion[0], soultion[1], soultion[2]), rootCorners));
+        root.SetData(new NodeData(sum, new Vector3(solution[0], solution[1], solution[2]), rootCorners));
     }
 
     /// <summary>
@@ -440,24 +440,30 @@ public class DualContour
     /// <param name="function"> The density function tiling this field </param>
     /// <param name="isoLevel"> The value of the density function edge </param>
     /// <returns> True if the node contains geometry, faslse otherwise </returns>
-    private bool ProcessNode(Octree<NodeData> node, Density function, float isoLevel)
+    private static bool ProcessNode(Octree<NodeData> node, Density function, float isoLevel)
     {
         // Compute intersections
         int encoding;
-        Cubiod bounds = node.GetBounds();
-        List<Vector3> intersections = this.FindIntersections(bounds, function, isoLevel, out encoding);
+        Cuboid bounds = node.GetBounds();
+        List<Vector3> intersections = FindIntersections(bounds, function, isoLevel, out encoding);
 
         // If cube is fully inside or oustide the shape trim this branch
-        if (intersections.Count == 0 || intersections.Count == 8)
+        if (intersections.Count == 0)
             return false;
         
         // Compute normals of intersections
         List<Vector3> normals = new List<Vector3>();
-        intersections.ForEach(point => normals.Add(this.ApproximateGradientAt(point, function)));
+        intersections.ForEach(point => normals.Add(ApproximateGradientAt(point, function)));
 
-        // Solve QEF and store result in this node
-        QEF qef = this.CreateQEF(intersections, normals, bounds);
+        // Solve QEF
+        QEF qef = CreateQEF(intersections, normals);
         float[] result = qef.Solve();
+
+        // Solve bounded if needed
+        if (!bounds.Contains(new Vector3(result[0], result[1], result[2])))
+            result = ApplyConstraint(bounds, qef);
+
+        // Store data 
         node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2]), encoding));
         return true;
     }
@@ -475,7 +481,7 @@ public class DualContour
     {
         // If maximum depth reached
         if (depth == 0)
-            return this.ProcessNode(root, function, isoLevel);
+            return ProcessNode(root, function, isoLevel);
 
         // Subdivide the tree
         root.SubDivide();
@@ -495,7 +501,7 @@ public class DualContour
             return false;
 
         // Attempt to simplify the root node
-        this.Simplify(root, function, simplificationTolerenceValue);
+        this.Simplify(root, simplificationTolerenceValue);
         return true;
     }
 
@@ -549,7 +555,7 @@ public class DualContour
         for (int i = 0; i < 4; i++)
         {
             // Node bounds and data
-            Cubiod bounds = nodes[i].GetBounds();
+            Cuboid bounds = nodes[i].GetBounds();
             NodeData data = nodes[i].GetData();
 
             // Node size and edge data
@@ -756,9 +762,12 @@ public class DualContour
         // Build octree
         this.isoLevel = isoLevel;
         this.root = new Octree<NodeData>(this.bounds);
-        this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth);
 
-        // Generate mesh and clear cache
+        // Check if shape was found
+        if (!this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth))
+            return null;
+
+        // Generate mesh
         return this.BuildMesh(this.root);
     }
 
@@ -769,7 +778,7 @@ public class DualContour
     /// </summary>
     /// <param name="bounds"> The bounds to sample </param>
     /// <param name="function"> A implicit density function representing the shape to contuor </param>
-    public DualContour(Cubiod bounds, Density function)
+    public DualContour(Cuboid bounds, Density function)
     {
         this.bounds = bounds;
         this.function = function;
