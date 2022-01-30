@@ -12,6 +12,8 @@ public class ThreadPool
     public ThreadPool(int numberOfThreads)
     {
         this.taskPool = new MaxHeap<PoolTask>();
+        this.poolLock = new object();
+
         this.RebuildThreads(numberOfThreads);
     }
 
@@ -69,7 +71,7 @@ public class ThreadPool
     {
         if (this.threads == null)
             throw new Exception("Error!: to reuse a terminated thread pool call RebuildThreads!");
-            
+
         bool result = true;
         foreach (PoolThread pt in this.threads)
             result &= pt.IsIdle() || !pt.IsRunning();
