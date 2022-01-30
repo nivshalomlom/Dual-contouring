@@ -2,6 +2,9 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// A class to take a density function and build a mesh from it
+/// </summary>
 public class DualContour
 {
 
@@ -356,6 +359,7 @@ public class DualContour
         public QEF qef;
         public Vector3 vertex;
         public int cornerEncoding, index;
+        public float size;
 
         /// <summary>
         /// A constructor to build a new NodeData struct
@@ -363,12 +367,14 @@ public class DualContour
         /// <param name="qef"> The qef of the node </param>
         /// <param name="vertex"> The result of said qef </param>
         /// <param name="cornerEncoding"> A number whose bits represent what corners crossed the boundry </param>
-        public NodeData(QEF qef, Vector3 vertex, int cornerEncoding)
+        /// <param name="size"> The length of the diagnel of the node bounds </param>
+        public NodeData(QEF qef, Vector3 vertex, int cornerEncoding, float size)
         {
             this.qef = qef;
             this.vertex = vertex;
             this.cornerEncoding = cornerEncoding;
             this.index = -1;
+            this.size = size;
         }
 
     }
@@ -389,6 +395,7 @@ public class DualContour
         QEF sum = null;
         for (int i = 0; i < 8; i++)
         {
+            // Skip trimmed branches
             if (root[i] == null)
                 continue;
             
@@ -410,6 +417,7 @@ public class DualContour
 
         // Solve sum QEF and bound if needed
         float[] solution = sum.Solve();
+        Cuboid bounds = root.GetBounds();
         if (!bounds.Contains(new Vector3(solution[0], solution[1], solution[2])))
         {
             float[] bounded = ApplyConstraint(bounds, sum);
@@ -430,7 +438,7 @@ public class DualContour
 
         // Turn root in a pseado leaf
         root.DeleteChildren();
-        root.SetData(new NodeData(sum, new Vector3(solution[0], solution[1], solution[2]), rootCorners));
+        root.SetData(new NodeData(sum, new Vector3(solution[0], solution[1], solution[2]), rootCorners, Vector3.Distance(bounds.min, bounds.max)));
     }
 
     /// <summary>
@@ -464,7 +472,7 @@ public class DualContour
             result = ApplyConstraint(bounds, qef);
 
         // Store data 
-        node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2]), encoding));
+        node.SetData(new NodeData(qef, new Vector3(result[0], result[1], result[2]), encoding, Vector3.Distance(bounds.min, bounds.max)));
         return true;
     }
 
@@ -547,6 +555,7 @@ public class DualContour
         int[] ptrs = {-1, -1, -1, -1};
         bool[] signChange = {false, false, false, false};
 
+        // Quad creation parameters
         float minSize = float.PositiveInfinity;
         int minIndex = 0;
         bool flip = false;
@@ -559,7 +568,7 @@ public class DualContour
             NodeData data = nodes[i].GetData();
 
             // Node size and edge data
-            float size = bounds.size.x;
+            float size = data.size;
             int edge = processEdgeMask[direction, i];
             int encoding = data.cornerEncoding;
 
