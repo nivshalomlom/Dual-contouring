@@ -12,7 +12,6 @@ public class Matrix : System.ICloneable
     #region Internal properties
 
     private float[,] data;
-    private Dictionary<string, object> cache;
 
     #endregion
 
@@ -24,12 +23,8 @@ public class Matrix : System.ICloneable
 
     public float this[int i, int j]
     {
-        get { return this.data[i, j]; }
-        set 
-        {
-            this.data[i, j] = value;
-            this.cache.Clear();
-        }
+        get => this.data[i, j];
+        set => this.data[i, j] = value;
     }
 
     #endregion
@@ -44,10 +39,6 @@ public class Matrix : System.ICloneable
     /// <returns> A array containing {Q, R} </returns>
     public Matrix[] QR_Decomposition()
     {
-        // Check cache
-        if (this.cache.ContainsKey("QR"))
-            return this.cache["QR"] as Matrix[];
-
         /* 
         Compute Uk = Ak - sigma(
             range: j|1 -> k - 1)
@@ -87,10 +78,9 @@ public class Matrix : System.ICloneable
                 Q[i, j] = U[i, j] / amplitude;
         }
 
-        // Compute R = Q_T * A and store QR in cache
+        // Compute R = Q_T * A
         Matrix R = Q.Transpose() * this;
-        this.cache.Add("QR", new Matrix[] {Q, R});
-        return this.cache["QR"] as Matrix[];
+        return new Matrix[] {Q, R};
     }
 
     /// <summary>
@@ -154,8 +144,7 @@ public class Matrix : System.ICloneable
         for (int i = 0; i < this.width; i++)
             det *= LU[0][i, i] * LU[1][i, i];
 
-        // Store in cache and return result
-        this.cache.Add("Determinant", det);
+        // Return result
         return det;
     }
 
@@ -184,10 +173,6 @@ public class Matrix : System.ICloneable
     /// <br/>Q - A matrix which has the eigenVectors as it's columns </returns>
     public Matrix[] Eigen(float toleranceValue = 0.01f, int maxIterations = 100)
     {
-        // Check cache
-        if (this.cache.ContainsKey("Eigen"))
-            return this.cache["Eigen"] as Matrix[];
-
         // Create A, and Q
         Matrix A = this.Clone() as Matrix;
         Matrix Q = Matrix.Identity(A.height);
@@ -209,9 +194,8 @@ public class Matrix : System.ICloneable
             loop: A = next;
         }
 
-        // Store in cache and return result
-        this.cache.Add("Eigen", new Matrix[] {A, Q});
-        return this.cache["Eigen"] as Matrix[];
+        // Return result
+        return new Matrix[] {A, Q};
     }
 
     /// <summary>
@@ -390,28 +374,16 @@ public class Matrix : System.ICloneable
     /// </summary>
     /// <param name="width"> The matrix width </param>
     /// <param name="height"> The matrix height </param>
-    public Matrix(int width, int height) 
-    {
-        this.data = new float[width, height];
-        this.cache = new Dictionary<string, object>();
-    }
+    public Matrix(int width, int height) => this.data = new float[width, height];
 
     /// <summary>
     /// A constructor to create a new matrix
     /// </summary>
     /// <param name="matrix"> The matrix data in a 2d float array </param>
-    public Matrix(float[,] matrix)
-    {
-        this.data = matrix;
-        this.cache = new Dictionary<string, object>();
-    }
+    public Matrix(float[,] matrix) => this.data = matrix;
 
     // Private constructor for cloning
-    private Matrix(Matrix matrix)
-    {
-        this.data = matrix.data.Clone() as float[,];
-        this.cache = new Dictionary<string, object>();
-    }
+    private Matrix(Matrix matrix) => this.data = matrix.data.Clone() as float[,];
 
     #endregion
 

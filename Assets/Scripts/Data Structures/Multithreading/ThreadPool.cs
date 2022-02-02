@@ -134,4 +134,14 @@ public class ThreadPool
     /// <returns> True if no tasks left in the pool, false otherwise </returns>
     public bool IsEmpty() => this.taskPool.Count == 0;
 
+    /// <summary>
+    /// A method to lock the pool and preform a action
+    /// </summary>
+    /// <param name="action"> The action to be preformed </param>
+    public void PerformActionLocked(Action action)
+    {
+        lock (this.poolLock)
+            action();
+    }
+
 }

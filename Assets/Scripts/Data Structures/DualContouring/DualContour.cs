@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -385,7 +384,7 @@ public class DualContour
     /// <param name="root"> The node to simplify </param>
     /// <param name="function"> The function we are contuoring </param>
     /// <param name="simplificationTolerenceValue"> The maximum error value the a simplification can have to be accepted </param>
-    private void Simplify(Octree<NodeData> root, float simplificationTolerenceValue)
+    private static void Simplify(Octree<NodeData> root, float simplificationTolerenceValue)
     {
         // Signs to approximate corner encoding
         int[] signs = {-1, -1, -1, -1, -1, -1, -1, -1};
@@ -509,7 +508,7 @@ public class DualContour
             return false;
 
         // Attempt to simplify the root node
-        this.Simplify(root, simplificationTolerenceValue);
+        Simplify(root, simplificationTolerenceValue);
         return true;
     }
 
@@ -749,7 +748,7 @@ public class DualContour
         List<Vector3> vertices = new List<Vector3>();
         List<int> indices = new List<int>();
         List<Mesh> meshes = new List<Mesh>();
-        
+
         // Create meshes
         this.ContourCellProc(root, vertices, indices, meshes);
         if (vertices.Count > 0)
