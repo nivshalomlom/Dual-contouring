@@ -40,10 +40,9 @@
      <Compile Include="Assets\Scripts\Data Structures\Linear Algebra\Matrix.cs" />
      <Compile Include="Assets\Scripts\Data Structures\Linear Algebra\Cuboid.cs" />
      <Compile Include="Assets\Scripts\Data Structures\Linear Algebra\QEF.cs" />
-     <Compile Include="Assets\Scripts\Test.cs" />
-     <Compile Include="Assets\Scripts\Data Structures\Multithreading\MaxHeap.cs" />
-     <Compile Include="Assets\Scripts\Data Structures\DualContouring\DualContour.cs" />
      <Compile Include="Assets\Scripts\Data Structures\Multithreading\ThreadPool.cs" />
+     <Compile Include="Assets\Scripts\Test.cs" />
+     <Compile Include="Assets\Scripts\Data Structures\DualContouring\DualContour.cs" />
     <Reference Include="UnityEngine">
         <HintPath>C:/Program Files/Unity/Hub/Editor/2020.3.17f1/Editor/Data/Managed/UnityEngine/UnityEngine.dll</HintPath>
     </Reference>

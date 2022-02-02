@@ -1,206 +1,137 @@
+using System.Collections.Generic;
 using System.Threading;
 using System;
 
+/// <summary>
+/// Thread pool implementation in C#
+/// </summary>
 public class ThreadPool
 {
 
-    private MaxHeap<PoolTask> taskPool;
+    // Constants
+    private const int THREAD_IDLE_TIMEOUT = 1000;
+    
+    // Task pool
+    private Queue<Action> taskPool;
     private object poolLock;
 
-    private PoolThread[] threads;
+    // Thread events
+    private ManualResetEvent terminateEvent;
+    private ManualResetEvent stopEvent;
 
-    public ThreadPool(int numberOfThreads)
+    // Threads
+    private Thread[] threads;
+    private bool[] idleFlags;
+
+    /// <summary>
+    /// A constructor to build a new thread pool
+    /// </summary>
+    /// <param name="numThreads"> The nubmer of the threads to build in the pool </param>
+    public ThreadPool(int numThreads)
     {
-        this.taskPool = new MaxHeap<PoolTask>();
+        // Initialize pool
+        this.taskPool = new Queue<Action>();
         this.poolLock = new object();
 
-        this.RebuildThreads(numberOfThreads);
-    }
+        // Initialize threads events
+        this.terminateEvent = new ManualResetEvent(false);
+        this.stopEvent = new ManualResetEvent(false);
 
-    ~ThreadPool() => this.Terminate();
+        // Initialize threads
+        this.threads = new Thread[numThreads];
+        this.idleFlags = new bool[numThreads];
 
-    public void AddTask(Action task, int priority)
-    {
-        lock (this.poolLock)
-            this.taskPool.Insert(new PoolTask(task, priority));
-    }
-
-    public void ClearPool()
-    {
-        lock (this.poolLock)
-            this.taskPool.Clear();
-    }
-
-    public void Start() 
-    {
-        if (this.threads == null)
-            throw new Exception("Error!: to reuse a terminated thread pool call RebuildThreads!");
-
-        foreach (PoolThread pt in this.threads)
-            pt.Start();
-    }
-
-    public void Stop() 
-    {
-        if (this.threads == null)
-            throw new Exception("Error!: to reuse a terminated thread pool call RebuildThreads!");
-
-        foreach (PoolThread pt in this.threads)
-            pt.Stop();
-    }
-
-    public void Terminate()
-    {
-        foreach (PoolThread pt in this.threads)
-            pt.Terminate();
-        
-        this.threads = null;
-    }
-
-    public void RebuildThreads(int numberOfThreads)
-    {
-        this.threads = new PoolThread[numberOfThreads];
-
-        for (int i = 0; i < numberOfThreads; i++)
-            this.threads[i] = new PoolThread(this);
-    }
-
-    public bool isEmpty() => this.taskPool.IsEmpty();
-
-    public bool allThreadIdle()
-    {
-        if (this.threads == null)
-            throw new Exception("Error!: to reuse a terminated thread pool call RebuildThreads!");
-
-        bool result = true;
-        foreach (PoolThread pt in this.threads)
-            result &= pt.IsIdle() || !pt.IsRunning();
-
-        return result;
-    }
-
-    #region Data structures
-
-    /// <summary>
-    /// A struct to define a task in the pool
-    /// </summary>
-    struct PoolTask : IComparable<PoolTask>
-    {
-        private Action task;
-        public int priority;
-
-        /// <summary>
-        /// A constructor to create a new pool task
-        /// </summary>
-        /// <param name="task"> A lambda expression to be executed </param>
-        /// <param name="priority"> The priority of this task, the higher the priority the sooner this task will be executed </param>
-        public PoolTask(Action task, int priority)
+        // Build all threads
+        for (int i = 0; i < numThreads; i++)
         {
-            this.task = task;
-            this.priority = priority;
-        }
+            // Reset flags and save id
+            this.idleFlags[i] = false;
+            int tid = i;
 
-        /// <summary>
-        /// A method to compare to tasks based on their priority
-        /// </summary>
-        /// <param name="other"> The task to compare to </param>
-        /// <returns> -1 if other task is more urgent, 1 if this task more urgent, 0 if the same priority </returns>
-        public int CompareTo(PoolTask other) => this.priority.CompareTo(other.priority);
-
-        /// <summary>
-        /// A method to run the task
-        /// </summary>
-        public void Run() => this.task();
-
-    }
-
-    /// <summary>
-    /// A class to represent a thread in the pool
-    /// </summary>
-    class PoolThread
-    {
-        private static int IdleCooldown = 1000;
-
-        private Thread thread;
-        private ThreadPool container;
-        private bool isIdle, isHalted, isAlive;
-
-        /// <summary>
-        /// A constructor to create a new pool thread
-        /// </summary>
-        /// <param name="container"> The thread pool containing this thread </param>
-        public PoolThread(ThreadPool container)
-        {
-            // Intiallize link to pool and internal flags
-            this.container = container;
-            this.isIdle = false;
-            this.isHalted = true;
-            this.isAlive = true;
-
-            // Create and the start the thread
-            this.thread = new Thread(() =>
+            this.threads[i] = new Thread(() => 
             {
-                while (this.isAlive)
+                // Start work loop
+                while (true)
                 {
-                     // If thread is stopped wait for start order
-                    if (this.isHalted)
-                    {
-                        Thread.Sleep(IdleCooldown);
-                        continue;
-                    }
-                    
+                    // If stopped wait for signal
+                    this.stopEvent.WaitOne(Timeout.Infinite);
+
+                    // Exit thread if terminate event triggered
+                    if (this.terminateEvent.WaitOne(0))
+                        break;
+
                     // Try and get a task from the pool
-                    PoolTask task = default(PoolTask);
-                    lock (container.poolLock)
+                    Action task = null;
+                    lock (this.poolLock)
                     {
-                        // If pool is empty go into idle mode
-                        if (container.taskPool.IsEmpty())
-                            this.isIdle = true;
-                        else 
+                        if (this.taskPool.Count == 0)
+                            this.idleFlags[tid] = true;
+                        else
                         {
-                            task = container.taskPool.ExtractMax();
-                            this.isIdle = false;
+                            this.idleFlags[tid] = false;
+                            task = this.taskPool.Dequeue();
                         }
                     }
 
-                    // If idle enter a cooldown
-                    if (this.isIdle)
-                        Thread.Sleep(IdleCooldown);
-                    else task.Run();
+                    // If idle timeout
+                    if (this.idleFlags[tid])
+                        Thread.Sleep(THREAD_IDLE_TIMEOUT);
+                    else task();
                 }
             });
-            this.thread.Start();
+            this.threads[i].Start();
         }
-
-        /// <summary>
-        /// A destructor to make sure the threads stops when object is destroyed
-        /// </summary>
-        ~PoolThread() => this.Terminate();
-
-        /// <returns> Returns true if this thread is currently idle </returns>
-        public bool IsIdle() => this.isIdle;
-
-        /// <returns> Returns true if this thread is alive </returns>
-        public bool IsRunning() => !this.isHalted;
-
-        /// <summary>
-        /// A method to start this thread
-        /// </summary>
-        public void Start() => this.isHalted = false;
-
-        /// <summary>
-        /// A method to stop this thread
-        /// </summary>
-        public void Stop() => this.isHalted = true;
-
-        /// <summary>
-        /// A method to terminate this thread <br/>
-        /// Note: after termination this thread cant be reused!
-        /// </summary>
-        public void Terminate() => this.isAlive = false;
-
     }
 
-    #endregion
+    // A destructor to safely terminate all pool threads before object destruction
+    ~ThreadPool()
+    {
+        // Tell all threads to terminate
+        this.stopEvent.Set();
+        this.terminateEvent.Set();
+
+        // For each thread wait for exit
+        for (int i = 0; i < this.threads.Length; i++)
+            this.threads[i].Join();
+    }
+
+    /// <summary>
+    /// A method to add a task to the pool
+    /// </summary>
+    /// <param name="action"> A lambda expression of the task to be done </param>
+    /// <returns> A manual reset event the will be signaled when this task is finished executing </returns>
+    public ManualResetEvent AddTask(Action action)
+    {
+        ManualResetEvent completionEvent = new ManualResetEvent(false);
+        lock (this.poolLock)
+            this.taskPool.Enqueue(() => 
+            {
+                action();
+                completionEvent.Set();
+            });
+        return completionEvent;
+    }
+
+    /// <returns> True if all threads are idle, false otherwise </returns>
+    public bool AllThreadsIdle()
+    {
+        foreach (bool flag in this.idleFlags)
+            if (!flag)
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// A method to start all the threads in the pool
+    /// </summary>
+    public void Start() => this.stopEvent.Set();
+
+    /// <summary>
+    /// A method to stop all the threads in the pool
+    /// </summary>
+    public void Stop() => this.stopEvent.Reset();
+
+    /// <returns> True if no tasks left in the pool, false otherwise </returns>
+    public bool IsEmpty() => this.taskPool.Count == 0;
 
 }
