@@ -1,6 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+using DualContouring.Utility;
+using DualContouring;
+
+using LinerAlgebra;
+
 /// <summary>
 /// A class to take a density function and build a mesh from it
 /// </summary>
@@ -8,119 +13,6 @@ public class DualContour
 {
 
     #region Constants
-
-    // Delegates
-    public delegate float Density(float x, float y, float z);
-    public delegate bool Condition<T>(T item);
-
-    // Mesh reconstruction
-    private static int MAX_VERTS_PER_MESH = 30000;
-
-    private static readonly int[,] cellProcFaceMask = 
-    {
-        {0, 4, 0},
-        {1, 5, 0},
-        {2, 6, 0},
-        {3, 7, 0},
-        {0, 2, 1},
-        {4, 6, 1},
-        {1, 3, 1},
-        {5, 7, 1},
-        {0, 1, 2},
-        {2, 3, 2},
-        {4, 5, 2},
-        {6, 7, 2}
-    };
-
-    private static readonly int[,,] faceProcFaceMask = 
-    {
-	    {
-            {4, 0, 0},
-            {5, 1, 0},
-            {6, 2, 0},
-            {7, 3, 0}
-        },
-	    {
-            {2, 0, 1},
-            {6, 4, 1},
-            {3, 1, 1},
-            {7, 5, 1}
-        },
-	    {
-            {1, 0, 2},
-            {3, 2, 2},
-            {5, 4, 2},
-            {7, 6, 2}
-        }
-    };
-
-    private static readonly int[,] orders =
-    {
-        {0, 0, 1, 1},
-        {0, 1, 0, 1},
-    };
-
-    private static readonly int[,,] faceProcEdgeMask = 
-    {
-        {
-            {1, 4, 0, 5, 1, 1},
-            {1, 6, 2, 7, 3, 1},
-            {0, 4, 6, 0, 2, 2},
-            {0, 5, 7, 1, 3, 2}
-        },
-        {
-            {0, 2, 3, 0, 1, 0},
-            {0, 6, 7, 4, 5, 0},
-            {1, 2, 0, 6, 4, 2},
-            {1, 3, 1, 7, 5, 2}
-        },
-        {
-            {1, 1, 0, 3, 2, 0},
-            {1, 5, 4, 7, 6, 0},
-            {0, 1, 5, 0, 4, 1},
-            {0, 3, 7, 2, 6, 1}
-        }
-    };
-
-    private static readonly int[,,] edgeProcEdgeMask = 
-    {
-	    {
-            {3,2,1,0,0},
-            {7,6,5,4,0}
-        },
-	    {
-            {5,1,4,0,1},
-            {7,3,6,2,1}
-        },
-	    {
-            {6,4,2,0,2},
-            {7,5,3,1,2}
-        },
-    };
-
-    private static readonly int[,] edgevmap = 
-    {
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}, // X - axis
-        {0, 2}, {1, 3}, {4, 6}, {5, 7}, // Y - axis
-        {0, 1}, {2, 3}, {4, 5}, {6, 7}  // Z - axis
-    };
-
-    private static readonly int[,] processEdgeMask = 
-    {
-        {3, 2, 1, 0},
-        {7, 5, 6, 4},
-        {11, 10, 9, 8}
-    };
-
-    private static readonly int[,] cellProcEdgeMask = 
-    {
-        {0, 1, 2, 3, 0},
-        {4, 5, 6, 7, 0},
-        {0, 4, 1, 5, 1},
-        {2, 6, 3, 7, 1},
-        {0, 2, 4, 6, 2},
-        {1, 3, 5, 7, 2}
-    };
 
     // Hyperparameters for QEF fixes
     private const float BIAS_STRENGTH = 0.01f;
@@ -139,95 +31,6 @@ public class DualContour
 
     // The rendered shape
     private Octree<NodeData> root;
-
-    #endregion
-
-    #region Utility functions
-
-    /// <summary>
-    /// A method to filter a list according to a given filter
-    /// </summary>
-    /// <param name="list"> The list to filter </param>
-    /// <param name="filter"> The filter condition </param>
-    /// <typeparam name="T"> The type of the items in the list </typeparam>
-    /// <returns> A new list containing only the items that satisfy the filter condition </returns>
-    private static List<T> FilterList<T>(List<T> list, Condition<T> filter)
-    {
-        List<T> result = new List<T>();
-        foreach (T item in list)
-            if (filter(item))
-                result.Add(item);
-
-        return result;
-    }
-
-    /// <summary>
-    /// A method to approximate the intersections between a given cube and a density function
-    /// </summary>
-    /// <param name="bounds"> The cube </param>
-    /// <param name="function"> The density function </param>
-    /// <param name="isoLevel"> The value of the density function edge </param>
-    /// <returns> A list of all points of intersection </returns>
-    private static List<Vector3> FindIntersections(Cuboid bounds, Density function, float isoLevel, out int cornerEncoding) 
-    {
-        // Lists for corners and intersections
-        List<Vector3> corners = bounds.GetCorners();
-        List<Vector3> intersections = new List<Vector3>();
-
-        // Foreach edge
-        cornerEncoding = 0;
-        for (int i = 0; i < 12; i++)
-        {
-            int v1Index = edgevmap[i, 0];
-            int v2Index = edgevmap[i, 1];
-            // Get its 2 vertices
-            Vector3 v1 = corners[v1Index];
-            Vector3 v2 = corners[v2Index];
-
-            // Compute their density
-            float v1Density = function(v1.x, v1.y, v1.z);
-            float v2Density = function(v2.x, v2.y, v2.z);
-
-            // Check if above or below isoLevel
-            bool v1Sign = v1Density <= isoLevel;
-            bool v2Sign = v2Density <= isoLevel;
-
-            // Update cornerEncoding
-            if (v1Sign)
-                cornerEncoding |= 1 << v1Index;
-            if (v2Sign)
-                cornerEncoding |= 1 << v2Index;
-
-            // Check if edge intersects isoLevel
-            if (v1Sign != v2Sign)
-            {
-                // Interpolate point on edge
-                float t = (isoLevel - v1Density) / (v2Density - v1Density);
-                intersections.Add(v1 + (v2 - v1) * t);
-            }
-        }
-
-        return intersections;
-    }
-
-    /// <summary>
-    /// A method to approximate the gradient of a density funtion at a given point
-    /// </summary>
-    /// <param name="point"> The point to evalutae </param>
-    /// <param name="function"> The density function </param>
-    /// <returns> A vector3 representing the gradient </returns>
-    private static Vector3 ApproximateGradientAt(Vector3 point, Density function)
-    {
-        float eps = Mathf.Epsilon;
-        float tEps = 2f * eps;
-
-        return new Vector3
-        (
-            (function(point.x + eps, point.y, point.z) - function(point.x - eps, point.y, point.z)) / tEps,
-            (function(point.x, point.y + eps, point.z) - function(point.x, point.y - eps, point.z)) / tEps,
-            (function(point.x, point.y, point.z + eps) - function(point.x, point.y, point.z - eps)) / tEps
-        );
-    }
 
     #endregion
 
@@ -283,7 +86,7 @@ public class DualContour
         results.Add(err.fixAxis(2, bounds.min.z + size.z).Solve());
 
         // Filter invalid point
-        results = FilterList(results, Bounded);
+        results = ContourUtility.FilterList(results, Bounded);
 
         // If all points filtered, try the 12 lines bordering the cell
         if (results.Count == 0)
@@ -302,7 +105,7 @@ public class DualContour
             results.Add(err.fixAxis(2, bounds.min.z + size.z).fixAxis(1, bounds.min.y + size.y).Solve());
 
             // Filter invalid point
-            results = FilterList(results, Bounded);
+            results = ContourUtility.FilterList(results, Bounded);
         }
 
         // If no valid point found try corners of the cube
@@ -349,34 +152,6 @@ public class DualContour
     #endregion
 
     #region Octree construction
-
-    /// <summary>
-    /// A class to hold the data of a qef node
-    /// </summary>
-    private struct NodeData
-    {
-        public QEF qef;
-        public Vector3 vertex;
-        public int cornerEncoding, index;
-        public float size;
-
-        /// <summary>
-        /// A constructor to build a new NodeData struct
-        /// </summary>
-        /// <param name="qef"> The qef of the node </param>
-        /// <param name="vertex"> The result of said qef </param>
-        /// <param name="cornerEncoding"> A number whose bits represent what corners crossed the boundry </param>
-        /// <param name="size"> The length of the diagnel of the node bounds </param>
-        public NodeData(QEF qef, Vector3 vertex, int cornerEncoding, float size)
-        {
-            this.qef = qef;
-            this.vertex = vertex;
-            this.cornerEncoding = cornerEncoding;
-            this.index = -1;
-            this.size = size;
-        }
-
-    }
 
     /// <summary>
     /// A method to try and simplify a given octree node
@@ -436,7 +211,7 @@ public class DualContour
             rootCorners |= (signs[i] == -1 ? midSign : signs[i]) << i;
 
         // Turn root in a pseado leaf
-        root.DeleteChildren();
+        root.DeleteChildrenArray();
         root.SetData(new NodeData(sum, new Vector3(solution[0], solution[1], solution[2]), rootCorners, Vector3.Distance(bounds.min, bounds.max)));
     }
 
@@ -452,7 +227,7 @@ public class DualContour
         // Compute intersections
         int encoding;
         Cuboid bounds = node.GetBounds();
-        List<Vector3> intersections = FindIntersections(bounds, function, isoLevel, out encoding);
+        List<Vector3> intersections = ContourUtility.FindIntersections(bounds, function, isoLevel, out encoding);
 
         // If cube is fully inside or oustide the shape trim this branch
         if (intersections.Count == 0)
@@ -460,7 +235,7 @@ public class DualContour
         
         // Compute normals of intersections
         List<Vector3> normals = new List<Vector3>();
-        intersections.ForEach(point => normals.Add(ApproximateGradientAt(point, function)));
+        intersections.ForEach(point => normals.Add(ContourUtility.ApproximateGradientAt(point, function)));
 
         // Solve QEF
         QEF qef = CreateQEF(intersections, normals);
@@ -484,7 +259,7 @@ public class DualContour
     /// <param name="simplificationTolerenceValue"> The maximum residual to allow simplification on </param>
     /// <param name="depth"> The maximum depth for the octree </param>
     /// <returns> True if the density intersects the octree, false otherwise </returns>
-    private bool BuildOctree(Octree<NodeData> root, Density function, float isoLevel, float simplificationTolerenceValue, int depth)
+    private static bool BuildOctree(Octree<NodeData> root, Density function, float isoLevel, float simplificationTolerenceValue, int depth)
     {
         // If maximum depth reached
         if (depth == 0)
@@ -498,7 +273,7 @@ public class DualContour
         for (int i = 0; i < 8; i++)
         {
             // If branch is empty trim it
-            if (!this.BuildOctree(root[i], function, isoLevel, simplificationTolerenceValue, depth - 1))
+            if (!BuildOctree(root[i], function, isoLevel, simplificationTolerenceValue, depth - 1))
                 root[i] = null;
             else liveChildren++;
         }
@@ -517,232 +292,11 @@ public class DualContour
     #region Mesh generation
 
     /// <summary>
-    /// A method to create a new mesh and add it to the provided mesh list
-    /// </summary>
-    /// <param name="vertices"> The mesh vertices </param>
-    /// <param name="indices"> The mesh triangles </param>
-    /// <param name="meshes"> The mesh list </param>
-    private void CreateMesh(List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
-    {
-        // Create new mesh
-        Mesh mesh = new Mesh();
-        mesh.SetVertices(vertices);
-        mesh.SetTriangles(indices, 0);
-        mesh.RecalculateBounds();
-        mesh.RecalculateNormals();
-
-        // Add new mesh to list add clear buffers
-        meshes.Add(mesh);
-        vertices.Clear();
-        indices.Clear();
-    }
-
-    /// <summary>
-    /// A method to convert a given quad to triangles
-    /// </summary>
-    /// <param name="nodes"> The quad nodes </param>
-    /// <param name="direction"> The direction of the edge </param>
-    /// <param name="vertices"> The vertex list </param>
-    /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourProcessEdge(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
-    {
-        // Collapse buffers to mesh if needed
-        if (vertices.Count + 4 > MAX_VERTS_PER_MESH)
-            this.CreateMesh(vertices, indices, meshes);
-
-        // Control parameters
-        int[] ptrs = {-1, -1, -1, -1};
-        bool[] signChange = {false, false, false, false};
-
-        // Quad creation parameters
-        float minSize = float.PositiveInfinity;
-        int minIndex = 0;
-        bool flip = false;
-
-        // For each vertex in quad
-        for (int i = 0; i < 4; i++)
-        {
-            // Node bounds and data
-            Cuboid bounds = nodes[i].GetBounds();
-            NodeData data = nodes[i].GetData();
-
-            // Node size and edge data
-            float size = data.size;
-            int edge = processEdgeMask[direction, i];
-            int encoding = data.cornerEncoding;
-
-            // Check for sign change in edge crossing
-            bool c0Sign = ((encoding >> edgevmap[edge, 0]) & 1) > 0;
-            bool c1Sign = ((encoding >> edgevmap[edge, 1]) & 1) > 0;
-            signChange[i] = c0Sign != c1Sign;
-
-            // Find smallest cell
-            if (size < minSize)
-            {
-                minSize = size;
-                minIndex = i;
-                flip = c0Sign;
-            }
-
-            // Prevent duplicates vertices
-            if (data.index == -1)
-            {
-                data.index = vertices.Count;
-                vertices.Add(data.vertex);
-            }
-            ptrs[i] = data.index;
-        }
-
-        // Render quad id needed
-        if (signChange[minIndex])
-        {
-            // Flip surfce normals if needed
-            if (flip)
-            {
-                indices.Add(ptrs[0]);
-                indices.Add(ptrs[1]);
-                indices.Add(ptrs[3]);
-
-                indices.Add(ptrs[0]);
-                indices.Add(ptrs[3]);
-                indices.Add(ptrs[2]);
-            }
-            else
-            {
-                indices.Add(ptrs[0]);
-                indices.Add(ptrs[3]);
-                indices.Add(ptrs[1]);
-
-                indices.Add(ptrs[0]);
-                indices.Add(ptrs[2]);
-                indices.Add(ptrs[3]);
-            }
-        }
-    }
-
-    /// <summary>
-    /// A method to connect edges along a face
-    /// </summary>
-    /// <param name="nodes"> The edges of the face </param>
-    /// <param name="direction"> The connection direction </param>
-    /// <param name="vertices"> The vertex list </param>
-    /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourEdgeProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
-    {
-        // Check input validity
-        bool allLeaves = true;
-        for (int i = 0; i < 4; i++)
-        {
-            if (nodes[i] == null)
-                return;
-            else if (!nodes[i].IsLeaf())
-                allLeaves = false;
-        }
-
-        // If all are leaves build all triangles
-        if (allLeaves)
-            this.ContourProcessEdge(nodes, direction, vertices, indices, meshes);
-        // Resolve all adjecnt edges
-        else
-            for (int i = 0; i < 2; i++)
-            {
-                Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
-                for (int j = 0; j < 4; j++)
-                    edgeNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][edgeProcEdgeMask[direction, i, j]];
-
-                this.ContourEdgeProc(edgeNodes, edgeProcEdgeMask[direction, i, 4], vertices, indices, meshes);
-            }
-    }
-
-    /// <summary>
-    /// A method to connect faces along a given edge
-    /// </summary>
-    /// <param name="nodes"> The nodes of quad edge </param>
-    /// <param name="direction"> The connection direction </param>
-    /// <param name="vertices"> The vertex list </param>
-    /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourFaceProc(Octree<NodeData>[] nodes, int direction, List<Vector3> vertices, List<int> indices, List<Mesh> meshes) 
-    {
-        // If one of the nodes is null face dosnt exist
-        if (nodes[0] == null || nodes[1] == null)
-            return;
-        
-        // If all are leaves nothing can be done
-        if (nodes[0].IsLeaf() && nodes[1].IsLeaf())
-            return;
-
-        // Resolve all adjacent faces
-        for (int i = 0; i < 4; i++)
-        {
-            Octree<NodeData>[] faceNodes = new Octree<NodeData>[2];
-            for (int j = 0; j < 2; j++)
-                faceNodes[j] = nodes[j].IsLeaf() ? nodes[j] : nodes[j][faceProcFaceMask[direction, i, j]];
-
-            this.ContourFaceProc(faceNodes, faceProcFaceMask[direction, i, 2], vertices, indices, meshes);
-        }
-
-        // Resolve all adjacent edges
-        for (int i = 0; i < 4; i++)
-        {
-            Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
-            int order = faceProcEdgeMask[direction, i, 0];
-
-            for (int j = 0; j < 4; j++)
-            {
-                Octree<NodeData> node = nodes[orders[order, j]];
-                edgeNodes[j] = node.IsLeaf() ? node : node[faceProcEdgeMask[direction, i, j + 1]];
-            }
-
-            this.ContourEdgeProc(edgeNodes, faceProcEdgeMask[direction, i, 5], vertices, indices, meshes);
-        }
-    }
-
-    /// <summary>
-    /// A method to triangulate a octree cell
-    /// </summary>
-    /// <param name="node"> The cell to process </param>
-    /// <param name="vertices"> The vertex list </param>
-    /// <param name="indices"> The trinagle ordering list </param>
-    private void ContourCellProc(Octree<NodeData> node, List<Vector3> vertices, List<int> indices, List<Mesh> meshes)
-    {
-        // If node is leaf nothing can be done
-        if (node.IsLeaf())
-            return;
-
-        // Resolve each child
-        for (int i = 0; i < 8; i++)
-            if (node[i] != null)
-                this.ContourCellProc(node[i], vertices, indices, meshes);
-
-        // Check for crossings on each edge
-        for (int i = 0; i < 12; i++)
-        {
-            Octree<NodeData>[] faceNodes = 
-            {
-                node[cellProcFaceMask[i, 0]],
-                node[cellProcFaceMask[i, 1]]
-            };
-
-            this.ContourFaceProc(faceNodes, cellProcFaceMask[i, 2], vertices, indices, meshes);
-        }
-
-        // Check for crossings on each face
-        for (int i = 0; i < 6; i++)
-        {
-            Octree<NodeData>[] edgeNodes = new Octree<NodeData>[4];
-            for (int j = 0; j < 4; j++)
-                edgeNodes[j] = node[cellProcEdgeMask[i, j]];
-
-            this.ContourEdgeProc(edgeNodes, cellProcEdgeMask[i, 4], vertices, indices, meshes);
-        }
-    }
-
-    /// <summary>
     /// A method to build the contuor's mesh
     /// </summary>
     /// <param name="root"> The root of the octree to start building from </param>
     /// <returns> The mesh of the contuor </returns>
-    private List<Mesh> BuildMesh(Octree<NodeData> root)
+    private static List<Mesh> BuildMesh(Octree<NodeData> root)
     {
         // Create lists for mesh data
         List<Vector3> vertices = new List<Vector3>();
@@ -750,9 +304,9 @@ public class DualContour
         List<Mesh> meshes = new List<Mesh>();
 
         // Create meshes
-        this.ContourCellProc(root, vertices, indices, meshes);
+        ContourBuilder.ContourCellProc(root, vertices, indices, meshes);
         if (vertices.Count > 0)
-            this.CreateMesh(vertices, indices, meshes);
+            ContourBuilder.CreateMesh(vertices, indices, meshes);
 
         // Return meshes
         return meshes;
@@ -772,11 +326,11 @@ public class DualContour
         this.root = new Octree<NodeData>(this.bounds);
 
         // Check if shape was found
-        if (!this.BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth))
+        if (!BuildOctree(this.root, this.function, isoLevel, simplificationTolerenceValue, maxOctreeDepth))
             return null;
 
         // Generate mesh
-        return this.BuildMesh(this.root);
+        return BuildMesh(this.root);
     }
 
     #endregion

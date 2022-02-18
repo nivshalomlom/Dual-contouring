@@ -1,6 +1,5 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
+using LinerAlgebra;
 
 /// <summary>
 /// A Octree implementation in C#
@@ -18,8 +17,11 @@ public class Octree<T>
     /// A constructor to create a new Octree
     /// </summary>
     /// <param name="bounds"> The 3D cube representing the bounds of the space to be stored in this octree </param>
-    public Octree(Cuboid bounds)
+    public Octree(Cuboid bounds, Octree<T>[] children = null)
     {
+        if (children != null && children.Length != 8)
+            throw new System.ArgumentException("Octree: children array must be of size 8!");
+
         this.bounds = bounds;
         this.children = null;
     }
@@ -68,7 +70,7 @@ public class Octree<T>
     /// <summary>
     /// A method to delete the array referencing the child nodes
     /// </summary>
-    public void DeleteChildren() => this.children = null;
+    public void DeleteChildrenArray() => this.children = null;
 
     /// <returns> True if this node is a leaf, false otherwise </returns>
     public bool IsLeaf() => this.children == null;
